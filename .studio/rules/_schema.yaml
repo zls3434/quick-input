@@ -1,0 +1,25 @@
+# 路径规则定义模式
+# 所有 .studio/rules/*.md 文件遵循此模式
+
+required-fields:
+  - paths          # 适用文件路径（glob 模式列表）
+
+optional-fields:
+  - platforms      # 各平台启用状态和配置
+
+platforms-field:
+  description: 各平台启用状态和配置
+  platforms:
+    claude-code: {enabled: bool, path: string}
+    cursor: {enabled: bool, type: string, globs: string}
+    codex: {enabled: bool, section: string}
+    windsurf: {enabled: bool, mode: string}
+    trae: {enabled: bool, mode: string}
+    hermes: {enabled: bool}
+    workbuddy: {enabled: bool}
+
+body-format: markdown
+body-sections:
+  - 规则标题
+  - 规范条目（逐条列出）
+  - 示例（正确示例与错误示例）

@@ -1,0 +1,81 @@
+---
+name: map-modules
+description: "将需求分解为模块，映射依赖关系、分配优先级，创建 systems-index.md。"
+license: MIT
+metadata:
+  model: sonnet
+  argument-hint: "[概念文件路径]"
+  user-invocable: true
+  allowed-tools:
+    - Read
+    - Glob
+    - Grep
+    - Write
+    - AskUserQuestion
+  platforms:
+    claude-code: {enabled: true}
+    cursor: {enabled: true}
+    codex: {enabled: true}
+    windsurf: {enabled: true, trigger: /map-modules}
+    trae: {enabled: true}
+    hermes: {enabled: true, platforms: [macos, linux, windows]}
+    workbuddy: {enabled: true}
+---
+
+# map-modules — 需求模块分解
+
+## 技能目的
+
+将产品概念分解为可独立开发的模块，映射模块间依赖关系，分配开发优先级，产出 `systems-index.md` 模块索引文档。
+
+## 参数说明
+
+- `[概念文件路径]`：product-concept.md 的路径，默认为 `docs/product-concept.md`。
+
+## 分阶段工作流
+
+### 阶段 1：读取概念文档
+
+- **输入**：概念文件路径参数
+- **处理**：
+  1. 使用 Read 读取 product-concept.md
+  2. 提取核心功能、产品支柱、用户类型、范围边界
+- **输出**：概念要素清单
+
+### 阶段 2：识别模块
+
+- **输入**：概念要素清单
+- **处理**：
+  1. 将核心功能按领域聚类为模块
+  2. 通过 AskUserQuestion 确认模块划分粒度
+  3. 为每个模块定义职责边界
+- **输出**：候选模块列表
+
+### 阶段 3：映射依赖关系
+
+- **输入**：候选模块列表
+- **处理**：分析模块间的数据流与调用关系，绘制依赖图，识别基础模块（被多模块依赖）与叶子模块
+- **输出**：模块依赖图
+
+### 阶段 4：分配优先级
+
+- **输入**：模块依赖图 + 产品支柱
+- **处理**：
+  1. 基础模块优先级最高
+  2. 直接支撑核心支柱的模块次之
+  3. 通过 AskUserQuestion 与用户确认优先级
+- **输出**：优先级分配表
+
+### 阶段 5：创建索引文档
+
+- **输入**：模块列表 + 依赖图 + 优先级
+- **处理**：使用 Write 创建 `docs/systems-index.md`，包含模块名、职责、依赖、优先级、对应 SRS 路径
+- **输出**：systems-index.md 文件
+
+## 协作协议引用
+
+- 遵循 `.claude/docs/templates/collaborative-protocols/design-agent-protocol.md` 模块划分规范
+
+## 推荐下一步
+
+对每个模块使用 `/requirement-spec` 编写详细需求规格。

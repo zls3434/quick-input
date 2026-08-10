@@ -1,0 +1,20 @@
+# 技能定义模式
+# 遵循 Agent Skills 开放标准
+
+required-fields:
+  - name          # 技能名称（1-64字符，小写字母+数字+连字符）
+  - description   # 技能描述（1-1024字符）
+
+optional-fields:
+  - license       # 开源协议
+  - compatibility # 兼容性声明
+  - metadata      # 元数据（平台特有字段）
+
+metadata-fields:
+  model: string           # 模型层级（claude-code 特有）
+  argument-hint: string   # 参数提示（claude-code 特有）
+  user-invocable: bool    # 是否用户可调用（claude-code 特有）
+  allowed-tools: list     # 允许工具列表（claude-code 特有）
+  platforms: object       # 各平台启用状态
+
+body-format: markdown

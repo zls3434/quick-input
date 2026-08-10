@@ -1,0 +1,93 @@
+﻿---
+name: release-checklist
+description: "验证发布前检查清单，逐项确认代码审查、测试、文档、迁移、配置、回滚计划等就绪。"
+version: 1.0.0
+platforms: [macos, linux, windows]
+metadata:
+  hermes:
+    tags: ["release", "ops"]
+    load_mode: on-demand
+    model: sonnet
+    argument-hint: "[版本号]"
+    user-invocable: true
+    allowed-tools:
+      - Read
+      - Glob
+      - Grep
+      - Write
+      - AskUserQuestion
+---
+
+# release-checklist — 发布前检查清单验证
+
+## 技能目的
+
+在版本发布前逐项验证检查清单，覆盖代码审查、测试通过、文档更新、数据库迁移、配置检查、回滚计划等关键维度，生成发布就绪度报告，确保不遗漏任何发布前置事项。
+
+## 参数说明
+
+- `[版本号]`：可选，指定待发布的版本号（如 `v1.2.0`）。省略时从 Git 标签或配置推断。
+
+## 分阶段工作流
+
+### 阶段 1：读取检查清单模板
+
+- **输入**：版本号参数
+- **处理**：
+  1. 使用 Glob 查找 `.claude/docs/templates/release-checklist.md` 模板
+  2. 使用 Read 读取模板中定义的检查项分类与条目
+  3. 若无模板，使用 Read 读取 `docs/release/checklist.md` 项目自定义清单
+  4. 使用 AskUserQuestion 与用户确认本次发布的版本号与范围
+- **输出**：检查清单模板
+
+### 阶段 2：验证代码审查
+
+- **输入**：检查清单模板
+- **处理**：
+  1. 使用 Bash（若有）检查未合并分支与未审查 PR
+  2. 使用 Grep 检查是否存在未解决的 `TODO`、`FIXME` 阻塞发布
+  3. 使用 Read 读取 `docs/reviews/` 中的代码审查记录
+  4. 确认所有合并请求均有至少一人审查通过
+- **输出**：代码审查检查结果
+
+### 阶段 3：验证测试通过
+
+- **输入**：代码审查检查结果
+- **处理**：
+  1. 使用 Glob 查找最新测试报告 `docs/test/`
+  2. 使用 Read 读取测试报告确认单元、集成、E2E 全部通过
+  3. 检查覆盖率是否达到项目阈值（如 80%）
+  4. 使用 Read 读取性能与安全审计报告确认无高危项
+- **输出**：测试检查结果
+
+### 阶段 4：验证文档更新
+
+- **输入**：测试检查结果
+- **处理**：
+  1. 使用 Glob 查找用户文档、API 文档、运维手册
+  2. 使用 Grep 检查文档版本号是否已更新至目标版本
+  3. 使用 Read 读取 CHANGELOG 确认变更已记录
+  4. 检查 SRS 与实现的一致性
+- **输出**：文档检查结果
+
+### 阶段 5：验证迁移、配置与回滚
+
+- **输入**：文档检查结果
+- **处理**：
+  1. 使用 Glob 查找数据库迁移脚本，确认已评审且可回滚
+  2. 使用 Read 读取配置变更说明，检查环境变量与密钥
+  3. 使用 AskUserQuestion 确认回滚计划是否演练完成
+  4. 检查特性开关（Feature Flag）配置
+  5. 使用 Write 生成报告 `docs/release/{版本}-checklist-report.md`
+  6. 报告含：逐项状态（PASS/FAIL/N/A）、问题清单、发布建议
+- **输出**：发布检查报告
+
+## 协作协议引用
+
+- 遵循 `.claude/docs/coding-standards.md` 编码规范
+- 发布检查报告写入 `docs/release/` 目录
+- 任一关键项 FAIL 即阻塞发布
+
+## 推荐下一步
+
+使用 `/launch-checklist` 执行最终发布就绪验证。使用 `/changelog` 生成变更日志。使用 `/patch-notes` 生成面向用户的发布说明。

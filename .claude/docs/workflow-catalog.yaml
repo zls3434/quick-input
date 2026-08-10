@@ -1,0 +1,491 @@
+# Software Engineering Studios 工作流目录
+# YAML 格式 7 阶段管线定义
+# 文件头标识：<!-- Software Engineering Studios -->
+
+version: "1.0"
+
+phases:
+
+  # ============================================================
+  # 阶段 1：需求阶段
+  # ============================================================
+  - id: requirements
+    label: "需求阶段"
+    description: "产品头脑风暴、技术栈配置、产品概念定义、模块映射和需求规格编写"
+    next_phase: architecture-design
+    steps:
+      - id: brainstorm
+        name: "产品头脑风暴"
+        command: /brainstorm
+        required: false
+        description: "由产品总监引导进行产品创意头脑风暴，适用于没有想法或模糊想法的场景"
+        artifact:
+          glob: "design/requirements/brainstorm-notes.md"
+          pattern: "design/requirements/brainstorm-notes.md"
+          min_count: 0
+
+      - id: setup-stack
+        name: "技术栈配置"
+        command: /setup-stack
+        required: true
+        description: "配置项目技术栈，生成技术偏好文件，激活对应技术栈专家 Agent"
+        artifact:
+          glob: ".claude/docs/technical-preferences.md"
+          pattern: ".claude/docs/technical-preferences.md"
+          min_count: 1
+
+      - id: product-concept
+        name: "产品概念文档"
+        command: /product-concept
+        required: true
+        description: "生成产品概念文档，定义产品定位、目标用户和核心功能"
+        artifact:
+          glob: "design/requirements/product-concept.md"
+          pattern: "design/requirements/product-concept.md"
+          min_count: 1
+
+      - id: map-modules
+        name: "系统模块映射"
+        command: /map-modules
+        required: true
+        description: "将产品概念拆解为系统模块，生成系统索引"
+        artifact:
+          glob: "design/requirements/systems-index.md"
+          pattern: "design/requirements/systems-index.md"
+          min_count: 1
+
+      - id: requirement-spec
+        name: "需求规格说明"
+        command: /requirement-spec
+        required: true
+        repeatable: true
+        description: "为每个系统模块编写详细需求规格说明，可重复执行"
+        artifact:
+          glob: "design/requirements/*-requirement.md"
+          pattern: "design/requirements/{module-name}-requirement.md"
+          min_count: 1
+
+  # ============================================================
+  # 阶段 2：架构设计阶段
+  # ============================================================
+  - id: architecture-design
+    label: "架构设计阶段"
+    description: "创建架构文档、记录架构决策、架构审查和控制清单生成"
+    next_phase: technical-design
+    steps:
+      - id: create-architecture
+        name: "创建架构文档"
+        command: /create-architecture
+        required: true
+        description: "创建整体架构文档，定义系统架构、模块划分和技术选型"
+        artifact:
+          glob: "docs/architecture/overview.md"
+          pattern: "docs/architecture/overview.md"
+          min_count: 1
+
+      - id: architecture-decision
+        name: "架构决策记录"
+        command: /architecture-decision
+        required: true
+        repeatable: true
+        description: "记录关键架构决策（ADR），至少生成 3 条"
+        artifact:
+          glob: "docs/architecture/decisions/ADR-*.md"
+          pattern: "docs/architecture/decisions/ADR-NNN-标题.md"
+          min_count: 3
+
+      - id: architecture-review
+        name: "架构审查"
+        command: /architecture-review
+        required: true
+        description: "由首席架构师对架构文档和 ADR 进行审查，输出审查报告"
+        artifact:
+          glob: "docs/architecture/architecture-review.md"
+          pattern: "docs/architecture/architecture-review.md"
+          min_count: 1
+
+      - id: create-control-manifest
+        name: "创建控制清单"
+        command: /create-control-manifest
+        required: true
+        description: "创建架构控制清单，列出所有受控文件和变更流程"
+        artifact:
+          glob: "docs/architecture/control-manifest.md"
+          pattern: "docs/architecture/control-manifest.md"
+          min_count: 1
+
+  # ============================================================
+  # 阶段 3：技术设计阶段
+  # ============================================================
+  - id: technical-design
+    label: "技术设计阶段"
+    description: "设计系统规格、UX 设计、API 规格和无障碍需求定义"
+    next_phase: pre-development
+    steps:
+      - id: design-system-spec
+        name: "设计系统规格"
+        command: /design-system-spec
+        required: false
+        description: "定义设计系统，包括设计令牌、组件库规格和响应式断点"
+        artifact:
+          glob: "design/design-system/design-system-spec.md"
+          pattern: "design/design-system/design-system-spec.md"
+          min_count: 0
+
+      - id: ux-design
+        name: "UX 设计"
+        command: /ux-design
+        required: true
+        repeatable: true
+        description: "为各模块创建 UX 设计文档，至少生成 3 个"
+        artifact:
+          glob: "design/ux/*-ux-design.md"
+          pattern: "design/ux/{module-name}-ux-design.md"
+          min_count: 3
+
+      - id: ux-review
+        name: "UX 审查"
+        command: /ux-review
+        required: true
+        description: "由 UX 设计负责人对所有 UX 设计进行审查"
+        artifact:
+          glob: "design/ux/ux-review.md"
+          pattern: "design/ux/ux-review.md"
+          min_count: 1
+
+      - id: api-spec
+        name: "API 规格说明"
+        command: /api-spec
+        required: false
+        description: "定义 API 接口规格，包括端点、请求/响应格式和错误码"
+        artifact:
+          glob: "docs/api/*-api-spec.md"
+          pattern: "docs/api/{module-name}-api-spec.md"
+          min_count: 0
+
+      - id: accessibility-requirements
+        name: "无障碍需求"
+        command: /accessibility-requirements
+        required: true
+        description: "定义无障碍需求，确保符合 WCAG 标准和可访问性法规"
+        artifact:
+          glob: "design/design-system/accessibility-requirements.md"
+          pattern: "design/design-system/accessibility-requirements.md"
+          min_count: 1
+
+  # ============================================================
+  # 阶段 4：预开发阶段
+  # ============================================================
+  - id: pre-development
+    label: "预开发阶段"
+    description: "原型制作、史诗与故事创建、测试环境搭建、Sprint 规划和 MVP 构建"
+    next_phase: development
+    steps:
+      - id: prototype
+        name: "原型制作"
+        command: /prototype
+        required: false
+        description: "制作快速原型验证关键交互和技术可行性"
+        artifact:
+          glob: "prototypes/*/README.md"
+          pattern: "prototypes/{prototype-name}/README.md"
+          min_count: 0
+
+      - id: create-epics
+        name: "创建史诗"
+        command: /create-epics
+        required: true
+        description: "将需求转化为史诗（Epic），定义粗粒度工作项"
+        artifact:
+          glob: "production/epics/epic-*.md"
+          pattern: "production/epics/epic-NN-标题.md"
+          min_count: 1
+
+      - id: create-stories
+        name: "创建用户故事"
+        command: /create-stories
+        required: true
+        repeatable: true
+        description: "将史诗拆解为可执行的用户故事，可重复执行"
+        artifact:
+          glob: "production/epics/*/stories/*.md"
+          pattern: "production/epics/{epic-name}/stories/story-NN.md"
+          min_count: 1
+
+      - id: test-setup
+        name: "测试环境搭建"
+        command: /test-setup
+        required: false
+        description: "搭建测试基础设施，包括测试框架、mock 服务和测试数据库"
+        artifact:
+          glob: "tests/README.md"
+          pattern: "tests/README.md"
+          min_count: 0
+
+      - id: sprint-plan
+        name: "Sprint 规划"
+        command: /sprint-plan
+        required: true
+        description: "规划 Sprint 内容，分配故事到 Sprint 并估算工作量"
+        artifact:
+          glob: "production/sprints/sprint-*.md"
+          pattern: "production/sprints/sprint-NN.md"
+          min_count: 1
+
+      - id: build-mvp
+        name: "MVP 构建"
+        command: /build-mvp
+        required: false
+        description: "构建最小可行产品以验证核心价值假设"
+        artifact:
+          glob: "src/"
+          pattern: "src/**/*.ts"
+          min_count: 0
+
+  # ============================================================
+  # 阶段 5：开发阶段
+  # ============================================================
+  - id: development
+    label: "开发阶段"
+    description: "Sprint 迭代开发，包含故事开发、代码审查、缺陷处理和回顾"
+    next_phase: testing
+    steps:
+      - id: sprint-plan
+        name: "Sprint 规划"
+        command: /sprint-plan
+        required: true
+        repeatable: true
+        description: "为每个新 Sprint 进行规划，可重复执行"
+        artifact:
+          glob: "production/sprints/sprint-*.md"
+          pattern: "production/sprints/sprint-NN.md"
+          min_count: 1
+
+      - id: story-readiness
+        name: "故事就绪检查"
+        command: /story-readiness
+        required: false
+        description: "检查故事是否满足开发就绪条件（验收标准清晰、依赖就绪）"
+        artifact:
+          glob: "production/sprints/*-readiness.md"
+          pattern: "production/sprints/sprint-NN-readiness.md"
+          min_count: 0
+
+      - id: dev-story
+        name: "开发故事"
+        command: /dev-story
+        required: true
+        repeatable: true
+        description: "开发单个用户故事，实现功能并编写测试"
+        artifact:
+          glob: "src/**/*.ts"
+          pattern: "src/**/*.{ts,tsx,py,java,go,vue}"
+          min_count: 1
+
+      - id: code-review
+        name: "代码审查"
+        command: /code-review
+        required: false
+        repeatable: true
+        description: "对已完成的故事代码进行审查，确保符合编码规范"
+        artifact:
+          glob: "production/sprints/*-review.md"
+          pattern: "production/sprints/sprint-NN-review.md"
+          min_count: 0
+
+      - id: story-done
+        name: "故事完成确认"
+        command: /story-done
+        required: true
+        repeatable: true
+        description: "确认故事完成，验证验收标准和测试证据"
+        artifact:
+          glob: "production/epics/*/stories/*-done.md"
+          pattern: "production/epics/{epic}/stories/story-NN-done.md"
+          min_count: 1
+
+      - id: qa-plan
+        name: "QA 计划"
+        command: /qa-plan
+        required: false
+        description: "制定 Sprint 级别的 QA 计划，定义测试策略"
+        artifact:
+          glob: "production/sprints/*-qa-plan.md"
+          pattern: "production/sprints/sprint-NN-qa-plan.md"
+          min_count: 0
+
+      - id: bug-report
+        name: "缺陷报告"
+        command: /bug-report
+        required: false
+        description: "记录发现的缺陷，包括复现步骤、严重程度和优先级"
+        artifact:
+          glob: "production/sprints/bugs/*.md"
+          pattern: "production/sprints/bugs/bug-NNN.md"
+          min_count: 0
+
+      - id: retrospective
+        name: "回顾会议"
+        command: /retrospective
+        required: false
+        description: "Sprint 回顾，总结经验教训和改进项"
+        artifact:
+          glob: "production/sprints/*-retrospective.md"
+          pattern: "production/sprints/sprint-NN-retrospective.md"
+          min_count: 0
+
+      - id: scope-check
+        name: "范围检查"
+        command: /scope-check
+        required: false
+        description: "检查当前工作是否超出 Sprint 范围"
+        artifact:
+          glob: "production/sprints/*-scope-check.md"
+          pattern: "production/sprints/sprint-NN-scope-check.md"
+          min_count: 0
+
+      - id: sprint-status
+        name: "Sprint 状态报告"
+        command: /sprint-status
+        required: false
+        description: "生成当前 Sprint 状态报告"
+        artifact:
+          glob: "production/sprints/*-status.md"
+          pattern: "production/sprints/sprint-NN-status.md"
+          min_count: 0
+
+  # ============================================================
+  # 阶段 6：测试优化阶段
+  # ============================================================
+  - id: testing
+    label: "测试优化阶段"
+    description: "性能分析、安全审计、技术债务评估、冒烟测试和回归测试"
+    next_phase: release
+    steps:
+      - id: perf-profile
+        name: "性能分析"
+        command: /perf-profile
+        required: false
+        description: "对系统进行性能分析和瓶颈定位"
+        artifact:
+          glob: "tests/performance/perf-report.md"
+          pattern: "tests/performance/perf-report.md"
+          min_count: 0
+
+      - id: security-audit
+        name: "安全审计"
+        command: /security-audit
+        required: false
+        description: "执行安全审计，检查漏洞和合规性"
+        artifact:
+          glob: "docs/tech-reference/security-audit.md"
+          pattern: "docs/tech-reference/security-audit.md"
+          min_count: 0
+
+      - id: tech-debt
+        name: "技术债务评估"
+        command: /tech-debt
+        required: false
+        description: "评估技术债务并制定偿还计划"
+        artifact:
+          glob: "docs/tech-reference/tech-debt.md"
+          pattern: "docs/tech-reference/tech-debt.md"
+          min_count: 0
+
+      - id: smoke-check
+        name: "冒烟测试"
+        command: /smoke-check
+        required: true
+        description: "执行冒烟测试，验证核心功能可用性"
+        artifact:
+          glob: "tests/smoke-check-result.md"
+          pattern: "tests/smoke-check-result.md"
+          min_count: 1
+
+      - id: soak-test
+        name: "耐久测试"
+        command: /soak-test
+        required: false
+        description: "执行长时间耐久测试，检测内存泄漏和性能衰减"
+        artifact:
+          glob: "tests/performance/soak-test-result.md"
+          pattern: "tests/performance/soak-test-result.md"
+          min_count: 0
+
+      - id: regression-suite
+        name: "回归测试套件"
+        command: /regression-suite
+        required: false
+        description: "运行回归测试套件，确保未引入新缺陷"
+        artifact:
+          glob: "tests/regression-result.md"
+          pattern: "tests/regression-result.md"
+          min_count: 0
+
+      - id: test-evidence-review
+        name: "测试证据审查"
+        command: /test-evidence-review
+        required: false
+        description: "审查所有测试证据，确保覆盖验收标准"
+        artifact:
+          glob: "tests/test-evidence-review.md"
+          pattern: "tests/test-evidence-review.md"
+          min_count: 0
+
+  # ============================================================
+  # 阶段 7：发布阶段
+  # ============================================================
+  - id: release
+    label: "发布阶段"
+    description: "门禁检查、发布检查清单、上线检查清单和变更日志生成"
+    next_phase: null
+    steps:
+      - id: gate-check
+        name: "门禁检查"
+        command: /gate-check
+        required: false
+        description: "执行发布门禁检查，验证所有质量条件满足"
+        artifact:
+          glob: "production/releases/gate-check.md"
+          pattern: "production/releases/gate-check.md"
+          min_count: 0
+
+      - id: release-checklist
+        name: "发布检查清单"
+        command: /release-checklist
+        required: true
+        description: "生成并执行发布检查清单，确保发布准备就绪"
+        artifact:
+          glob: "production/releases/release-checklist-*.md"
+          pattern: "production/releases/release-checklist-vX.Y.Z.md"
+          min_count: 1
+
+      - id: launch-checklist
+        name: "上线检查清单"
+        command: /launch-checklist
+        required: true
+        description: "生成上线检查清单，包括部署步骤和回滚方案"
+        artifact:
+          glob: "production/releases/launch-checklist-*.md"
+          pattern: "production/releases/launch-checklist-vX.Y.Z.md"
+          min_count: 1
+
+      - id: changelog
+        name: "变更日志"
+        command: /changelog
+        required: false
+        description: "根据提交记录自动生成变更日志"
+        artifact:
+          glob: "docs/CHANGELOG.md"
+          pattern: "docs/CHANGELOG.md"
+          min_count: 0
+
+      - id: patch-notes
+        name: "补丁说明"
+        command: /patch-notes
+        required: false
+        description: "生成面向用户的补丁说明"
+        artifact:
+          glob: "production/releases/patch-notes-*.md"
+          pattern: "production/releases/patch-notes-vX.Y.Z.md"
+          min_count: 0

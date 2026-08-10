@@ -1,0 +1,5 @@
+# 此目录存放资产提案文档
+# 文件命名规则：[资产类型]-[编号]-[名称]-proposal.md
+# 示例：agent-001-rust-specialist-proposal.md
+# 示例：skill-001-perf-audit-proposal.md
+# 示例：rule-001-mobile-code-proposal.md

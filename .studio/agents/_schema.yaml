@@ -1,0 +1,33 @@
+# Agent 定义模式
+# 所有 .studio/agents/*.md 文件遵循此模式
+
+required-fields:
+  - name          # Agent 名称（唯一标识）
+  - description   # Agent 职责描述
+  - model         # 模型层级（opus/sonnet/haiku）
+
+optional-fields:
+  - tools         # 可用工具列表
+  - maxTurns      # 最大对话轮数
+  - skills        # 关联技能列表
+  - memory        # 记忆类型
+
+platforms-field:
+  description: 各平台启用状态和配置
+  platforms:
+    claude-code: {enabled: bool, path: string}
+    cursor: {enabled: bool, type: string}
+    codex: {enabled: bool, section: string}
+    windsurf: {enabled: bool, type: string}
+    trae: {enabled: bool, type: string}
+    hermes: {enabled: bool}
+    workbuddy: {enabled: bool}
+
+body-format: markdown
+body-sections:
+  - 角色描述
+  - 协作协议
+  - 关键职责
+  - 决策框架
+  - 委托地图
+  - 不得做的事情

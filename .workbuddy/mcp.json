@@ -1,0 +1,1 @@
+﻿{"mcpServers":{"ses-studio":{"command":"node","args":["tools/adapters/workbuddy-mcp-server.js"],"description":"Software Engineering Studios MCP 服务"}}}

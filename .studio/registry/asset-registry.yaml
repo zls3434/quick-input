@@ -1,0 +1,73 @@
+# 资产注册表
+# 追踪所有通过动态扩展机制创建或变更的资产（Agent/Skill/Rule）
+# 详见 docs/extension-mechanism.md
+version: 1.0.0
+last_updated: "2026-07-08"
+
+# 资产条目状态流转：proposed → draft → reviewed → approved → registered
+# 拒绝路径：proposed/draft/reviewed → rejected
+
+assets:
+  # 专家 Agent 注册条目
+  # 条目字段说明：
+  #   id: 编号（agent-NNN）
+  #   name: kebab-case 唯一标识
+  #   chinese_name: 中文名称
+  #   layer: expert（动态新增仅限专家层）
+  #   category: 技术栈专家 / 工程专家 / 领域专家
+  #   model: sonnet / haiku
+  #   parent_department: 所属部门负责人 Agent 名称
+  #   status: proposed / draft / reviewed / approved / rejected / registered
+  #   proposal_date: ISO 8601 日期
+  #   approval_date: ISO 8601 日期（批准后填写）
+  #   file_path: Agent 定义文件路径
+  #   approved_by: 批准者（chief-architect + user）
+  #   proposal_doc: 提案文档路径
+  #   review_doc: 审核报告路径
+  agents: []
+
+  # 技能注册条目
+  # 额外字段：
+  #   phase: 所属工作流阶段（入门导航/需求阶段/架构设计/技术设计/预开发/开发/测试优化/发布部署/团队编排/工具类/平台工具/动态扩展）
+  #   command: 斜杠命令（如 /create-agent）
+  skills:
+    - id: skill-001
+      name: code-management
+      chinese_name: 代码管理
+      phase: 开发
+      command: /code-management
+      model: sonnet
+      status: registered
+      proposal_date: "2026-07-08"
+      approval_date: "2026-07-08"
+      file_path: .studio/skills/code-management/SKILL.md
+      approved_by: chief-architect + user
+      proposal_doc: .studio/registry/proposals/skill-001-code-management-proposal.md
+      review_doc: .studio/registry/reviews/skill-code-management-review.md
+    - id: skill-002
+      name: tech-reference
+      chinese_name: 技术参考文档管理
+      phase: 需求阶段
+      command: /tech-reference
+      model: sonnet
+      status: registered
+      proposal_date: "2026-07-09"
+      approval_date: "2026-07-09"
+      file_path: .studio/skills/tech-reference/SKILL.md
+      approved_by: chief-architect + user
+      proposal_doc: .studio/registry/proposals/skill-002-tech-reference-proposal.md
+      review_doc: .studio/registry/reviews/skill-tech-reference-review.md
+
+  # 路径规则注册条目
+  # 额外字段：
+  #   paths: 适用文件路径 glob 模式列表
+  rules: []
+
+# 统计信息
+# total_* 字段包含初始预设数量 + 动态新增数量
+# total_dynamic_additions 仅统计通过动态扩展机制新增的数量
+statistics:
+  total_agents: 40        # 初始 40，每次新增 Agent +1
+  total_skills: 76        # 初始 74，每次新增 Skill +1（不含本机制新增的 5 个技能）
+  total_rules: 11         # 初始 11，每次新增 Rule +1
+  total_dynamic_additions: 2

@@ -1,0 +1,120 @@
+# 技能目录
+# 按开发阶段分类
+
+version: 1.0.0
+total: 81
+
+categories:
+  入门导航:
+    skills:
+      - {name: start, command: /start, model: sonnet, description: "引导式上手流程"}
+      - {name: help, command: /help, model: haiku, description: "查看可用命令和Agent"}
+      - {name: onboard, command: /onboard, model: haiku, description: "新成员入职引导"}
+      - {name: project-stage-detect, command: /project-stage-detect, model: haiku, description: "检测项目阶段"}
+      - {name: adopt, command: /adopt, model: sonnet, description: "将现有项目纳入管理"}
+  
+  需求阶段:
+    skills:
+      - {name: brainstorm, command: /brainstorm, model: sonnet, description: "产品头脑风暴"}
+      - {name: setup-stack, command: /setup-stack, model: sonnet, description: "技术栈配置"}
+      - {name: product-concept, command: /product-concept, model: sonnet, description: "产品概念文档"}
+      - {name: map-modules, command: /map-modules, model: sonnet, description: "系统模块映射"}
+      - {name: requirement-spec, command: /requirement-spec, model: sonnet, description: "需求规格说明"}
+      - {name: quick-spec, command: /quick-spec, model: sonnet, description: "快速需求规格"}
+      - {name: review-all-srs, command: /review-all-srs, model: opus, description: "全量需求审查"}
+      - {name: consistency-check, command: /consistency-check, model: sonnet, description: "需求一致性检查"}
+      - {name: tech-reference, command: /tech-reference, model: sonnet, description: "技术参考文档管理"}
+  
+  架构设计:
+    skills:
+      - {name: design-review, command: /design-review, model: sonnet, description: "设计审查"}
+      - {name: create-architecture, command: /create-architecture, model: sonnet, description: "创建架构文档"}
+      - {name: architecture-decision, command: /architecture-decision, model: sonnet, description: "架构决策记录"}
+      - {name: architecture-review, command: /architecture-review, model: opus, description: "架构审查"}
+      - {name: create-control-manifest, command: /create-control-manifest, model: sonnet, description: "控制清单"}
+      - {name: propagate-design-change, command: /propagate-design-change, model: sonnet, description: "传播设计变更"}
+      - {name: reverse-document, command: /reverse-document, model: sonnet, description: "逆向文档生成"}
+  
+  技术设计:
+    skills:
+      - {name: design-system-spec, command: /design-system-spec, model: sonnet, description: "设计系统规格"}
+      - {name: ux-design, command: /ux-design, model: sonnet, description: "UX设计文档"}
+      - {name: ux-review, command: /ux-review, model: sonnet, description: "UX审查"}
+      - {name: api-spec, command: /api-spec, model: sonnet, description: "API规格说明"}
+      - {name: accessibility-requirements, command: /accessibility-requirements, model: sonnet, description: "无障碍需求"}
+  
+  预开发:
+    skills:
+      - {name: prototype, command: /prototype, model: sonnet, description: "技术原型验证"}
+      - {name: build-mvp, command: /build-mvp, model: sonnet, description: "MVP构建"}
+      - {name: create-epics, command: /create-epics, model: sonnet, description: "创建史诗"}
+      - {name: create-stories, command: /create-stories, model: sonnet, description: "创建用户故事"}
+      - {name: test-setup, command: /test-setup, model: sonnet, description: "测试环境搭建"}
+      - {name: sprint-plan, command: /sprint-plan, model: sonnet, description: "Sprint规划"}
+      - {name: estimate, command: /estimate, model: sonnet, description: "工作量估算"}
+  
+  开发:
+    skills:
+      - {name: dev-story, command: /dev-story, model: sonnet, description: "开发用户故事"}
+      - {name: code-management, command: /code-management, model: sonnet, description: "代码管理工作流"}
+      - {name: code-review, command: /code-review, model: sonnet, description: "代码审查"}
+      - {name: story-readiness, command: /story-readiness, model: haiku, description: "故事就绪检查"}
+      - {name: story-done, command: /story-done, model: sonnet, description: "故事完成确认"}
+      - {name: sprint-status, command: /sprint-status, model: haiku, description: "Sprint状态报告"}
+      - {name: scope-check, command: /scope-check, model: haiku, description: "范围检查"}
+      - {name: bug-report, command: /bug-report, model: sonnet, description: "缺陷报告"}
+      - {name: bug-triage, command: /bug-triage, model: sonnet, description: "缺陷分诊"}
+      - {name: hotfix, command: /hotfix, model: sonnet, description: "热修复"}
+      - {name: qa-plan, command: /qa-plan, model: sonnet, description: "QA计划"}
+      - {name: retrospective, command: /retrospective, model: sonnet, description: "Sprint回顾"}
+  
+  测试优化:
+    skills:
+      - {name: perf-profile, command: /perf-profile, model: sonnet, description: "性能分析"}
+      - {name: security-audit, command: /security-audit, model: sonnet, description: "安全审计"}
+      - {name: tech-debt, command: /tech-debt, model: sonnet, description: "技术债务评估"}
+      - {name: smoke-check, command: /smoke-check, model: sonnet, description: "冒烟测试"}
+      - {name: soak-test, command: /soak-test, model: sonnet, description: "耐久测试"}
+      - {name: regression-suite, command: /regression-suite, model: sonnet, description: "回归测试"}
+      - {name: test-evidence-review, command: /test-evidence-review, model: sonnet, description: "测试证据审查"}
+  
+  发布部署:
+    skills:
+      - {name: gate-check, command: /gate-check, model: opus, description: "门禁检查"}
+      - {name: release-checklist, command: /release-checklist, model: sonnet, description: "发布检查清单"}
+      - {name: launch-checklist, command: /launch-checklist, model: sonnet, description: "上线检查清单"}
+      - {name: changelog, command: /changelog, model: haiku, description: "变更日志"}
+      - {name: patch-notes, command: /patch-notes, model: haiku, description: "补丁说明"}
+      - {name: day-one-patch, command: /day-one-patch, model: sonnet, description: "首日补丁"}
+  
+  团队编排:
+    skills:
+      - {name: team-frontend, command: /team-frontend, model: sonnet, description: "前端团队编排"}
+      - {name: team-backend, command: /team-backend, model: sonnet, description: "后端团队编排"}
+      - {name: team-qa, command: /team-qa, model: sonnet, description: "QA团队编排"}
+      - {name: team-release, command: /team-release, model: sonnet, description: "发布团队编排"}
+      - {name: team-polish, command: /team-polish, model: sonnet, description: "打磨团队编排"}
+      - {name: team-security, command: /team-security, model: sonnet, description: "安全团队编排"}
+      - {name: team-devops, command: /team-devops, model: sonnet, description: "DevOps团队编排"}
+  
+  工具类:
+    skills:
+      - {name: content-audit, command: /content-audit, model: sonnet, description: "内容审计"}
+      - {name: test-flakiness, command: /test-flakiness, model: sonnet, description: "测试抖动检测"}
+      - {name: skill-test, command: /skill-test, model: sonnet, description: "技能测试"}
+      - {name: skill-improve, command: /skill-improve, model: sonnet, description: "技能改进"}
+      - {name: user-test-report, command: /user-test-report, model: sonnet, description: "用户测试报告"}
+      - {name: audit-docs, command: /audit-docs, model: sonnet, description: "文档审计"}
+      - {name: test-helpers, command: /test-helpers, model: sonnet, description: "测试辅助库"}
+      - {name: localize, command: /localize, model: sonnet, description: "国际化扫描"}
+      - {name: milestone-review, command: /milestone-review, model: sonnet, description: "里程碑审查"}
+      - {name: create-asset, command: /create-asset, model: sonnet, description: "动态扩展统一入口"}
+      - {name: create-agent, command: /create-agent, model: sonnet, description: "创建新专家 Agent"}
+      - {name: create-skill, command: /create-skill, model: sonnet, description: "创建新技能"}
+      - {name: create-rule, command: /create-rule, model: sonnet, description: "创建新路径规则"}
+      - {name: asset-review, command: /asset-review, model: opus, description: "资产审核"}
+  
+  平台工具:
+    skills:
+      - {name: sync-platforms, command: /sync-platforms, model: sonnet, description: "平台同步"}
+      - {name: platform-check, command: /platform-check, model: haiku, description: "平台配置检查"}

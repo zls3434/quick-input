@@ -1,0 +1,57 @@
+version: 1.2.0
+project: software-engineering-studios
+canonical-source: .studio/
+description: 软件工程工作室多平台适配清单
+platforms:
+  claude-code:
+    enabled: true
+    output-paths:
+      - CLAUDE.md
+      - .claude/
+    adapter-script: tools/adapters/sync-claude-code.sh
+    status: pending
+  codex:
+    enabled: true
+    output-paths:
+      - AGENTS.md
+      - src/frontend/AGENTS.md
+      - src/backend/AGENTS.md
+      - tests/AGENTS.md
+    adapter-script: tools/adapters/sync-codex.sh
+    status: pending
+  cursor:
+    enabled: true
+    output-paths:
+      - AGENTS.md
+      - .cursor/
+    adapter-script: tools/adapters/sync-cursor.sh
+    status: pending
+  windsurf:
+    enabled: true
+    output-paths:
+      - AGENTS.md
+      - .windsurfrules
+      - .windsurf/
+    adapter-script: tools/adapters/sync-windsurf.sh
+    status: pending
+  trae:
+    enabled: true
+    output-paths:
+      - AGENTS.md
+      - .trae/
+    adapter-script: tools/adapters/sync-trae.sh
+    status: pending
+  hermes:
+    enabled: true
+    output-paths:
+      - AGENTS.md
+      - .hermes/
+    adapter-script: tools/adapters/sync-hermes.sh
+    status: pending
+  workbuddy:
+    enabled: true
+    output-paths:
+      - AGENTS.md
+      - .workbuddy/
+    adapter-script: tools/adapters/sync-workbuddy.sh
+    status: pending

@@ -1,0 +1,5 @@
+# 此目录存放资产审核报告
+# 文件命名规则：[资产类型]-[资产名称]-review.md
+# 示例：agent-rust-specialist-review.md
+# 示例：skill-perf-audit-review.md
+# 示例：rule-mobile-code-review.md

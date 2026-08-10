@@ -1,0 +1,86 @@
+---
+name: retrospective
+description: "Sprint 或里程碑回顾技能。汇总周期内 Story、Bug、Hotfix 数据，引导团队完成回顾五步法，产出可追踪的行动项清单。"
+license: MIT
+metadata:
+  model: sonnet
+  argument-hint: "[Sprint-id 或里程碑名称]"
+  user-invocable: true
+  allowed-tools:
+    - Read
+    - Glob
+    - Grep
+    - Write
+    - AskUserQuestion
+  platforms:
+    claude-code: {enabled: true}
+    cursor: {enabled: true}
+    codex: {enabled: true}
+    windsurf: {enabled: true, trigger: /retrospective}
+    trae: {enabled: true}
+    hermes: {enabled: true, platforms: [macos, linux, windows]}
+    workbuddy: {enabled: true}
+---
+
+# retrospective —— Sprint/里程碑回顾技能
+
+## 技能目的
+
+在 Sprint 或里程碑结束时引导团队完成结构化回顾，
+汇总周期内的 Story、Bug、Hotfix 与范围变更数据，
+通过回顾五步法（回顾目标 → 收集数据 → 生成洞察 → 决定行动项 → 收尾）
+产出可追踪的改进行动项清单，形成持续改进闭环。
+
+## 参数说明
+
+- `[Sprint-id 或里程碑名称]`：待回顾的周期标识，例如 `Sprint-12` 或 `M3-Checkout`。
+  省略时默认取 `docs/sprints/` 下最新一个已结束 Sprint。
+
+## 分阶段工作流
+
+### 阶段 1：回顾目标
+
+- **输入**：用户提供的周期标识。
+- **处理**：使用 Read 读取 Sprint 计划文件，提取原始目标、承诺范围、容量预估；使用 AskUserQuestion 与用户确认回顾焦点。
+- **输出**：回顾目标声明与焦点议题。
+
+### 阶段 2：收集数据
+
+- **输入**：阶段 1 的周期范围。
+- **处理**：并行检索：
+  - Story 完成情况（`docs/stories/`）
+  - Bug 报告与修复记录（`docs/bugs/`）
+  - Hotfix 审计（`docs/hotfix/`）
+  - 范围变更（`docs/stories/_scope/`）
+  - 既有回顾行动项闭环状态
+- **输出**：周期数据汇总表，含完成率、缺陷密度、范围变更计数。
+
+### 阶段 3：生成洞察
+
+- **输入**：阶段 2 的数据汇总。
+- **处理**：识别模式与趋势，例如：反复出现的阻塞类型、估算偏差、范围蔓延热点；使用 AskUserQuestion 收集团队成员的主观感受补充。
+- **输出**：洞察清单，按"做得好 / 需改进 / 困惑点"分类。
+
+### 阶段 4：决定行动项
+
+- **输入**：阶段 3 的洞察清单。
+- **处理**：将每个"需改进"洞察转化为 SMART 行动项（具体、可衡量、有负责人、有时限）；使用 AskUserQuestion 与用户确认负责人与截止日期。
+- **输出**：行动项清单，含编号、负责人、截止日期、验收标准。
+
+### 阶段 5：收尾与落盘
+
+- **输入**：阶段 1-4 的全部产物。
+- **处理**：使用 Write 将回顾报告写入 `docs/retro/RETRO-<周期标识>.md`；更新 `docs/retro/ACTION-ITEMS.md` 追踪文件追加新行动项。
+- **输出**：回顾报告路径与新增行动项数量。
+
+## 协作协议引用
+
+- 回顾属团队活动，关键决策点必须通过 AskUserQuestion 征求用户意见。
+- 写入报告与行动项前必须询问："我可以将回顾报告写入 [路径] 吗？"
+- 行动项负责人与截止日期由用户确认，本技能不得代为指派。
+
+## 推荐下一步
+
+- 回顾后运行 `/sprint-status` 确认下一周期承接的行动项可见。
+- 行动项涉及流程改进时，可更新 `.claude/docs/coordination-rules.md`。
+- 下一周期启动时运行 `/story-readiness` 确保新 Story 已就绪。

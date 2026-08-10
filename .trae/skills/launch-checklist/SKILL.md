@@ -1,0 +1,102 @@
+---
+name: launch-checklist
+description: "最终发布就绪度验证，运行最终测试、检查生产配置、验证监控告警与回滚方案并签发发布。"
+license: MIT
+metadata:
+  model: sonnet
+  argument-hint: "[版本号]"
+  user-invocable: true
+  allowed-tools:
+    - Read
+    - Glob
+    - Grep
+    - Write
+    - Bash
+    - AskUserQuestion
+  platforms:
+    claude-code: {enabled: true}
+    cursor: {enabled: true}
+    codex: {enabled: true}
+    windsurf: {enabled: true, trigger: /launch-checklist}
+    trae: {enabled: true}
+    hermes: {enabled: true, platforms: [macos, linux, windows]}
+    workbuddy: {enabled: true}
+---
+
+# launch-checklist — 最终发布就绪度验证
+
+## 技能目的
+
+在版本正式发布到生产环境前执行最终就绪度验证，运行最终测试套件、检查生产环境配置、验证监控告警与回滚方案，签发发布许可，作为发布前的最后一道关卡。
+
+## 参数说明
+
+- `[版本号]`：可选，指定待发布版本号。省略时从 Git 标签或发布记录推断。
+
+## 分阶段工作流
+
+### 阶段 1：运行最终测试套件
+
+- **输入**：版本号参数
+- **处理**：
+  1. 使用 Read 读取测试运行配置
+  2. 使用 Bash 执行完整回归套件（单元+集成+E2E）
+  3. 使用 Bash 执行冒烟测试套件
+  4. 捕获结果并统计通过率
+  5. 若任一关键用例失败，立即终止发布流程
+- **输出**：最终测试结果
+
+### 阶段 2：检查生产环境配置
+
+- **输入**：最终测试结果
+- **处理**：
+  1. 使用 Glob 查找部署配置（`deploy/`、`k8s/`、`terraform/`）
+  2. 使用 Read 读取生产环境配置，确认与预期一致
+  3. 使用 Grep 检查是否残留调试配置（`debug: true`、`console.log`）
+  4. 使用 AskUserQuestion 与用户确认环境变量与密钥已就绪
+  5. 检查资源配额（CPU、内存、磁盘）是否满足预期负载
+- **输出**：生产环境配置检查结果
+
+### 阶段 3：验证监控告警
+
+- **输入**：生产环境配置检查结果
+- **处理**：
+  1. 使用 Glob 查找监控配置（Prometheus、Grafana、Datadog）
+  2. 使用 Read 读取告警规则，确认覆盖关键指标
+  3. 使用 Bash 测试告警通道是否可达（webhook、邮件、短信）
+  4. 确认日志采集已配置且可查询
+  5. 确认健康检查端点可访问
+- **输出**：监控告警验证结果
+
+### 阶段 4：检查回滚方案
+
+- **输入**：监控告警验证结果
+- **处理**：
+  1. 使用 Read 读取回滚预案文档
+  2. 确认回滚步骤可执行且有负责人
+  3. 确认数据库迁移可回滚（前向兼容与降级脚本）
+  4. 确认旧版本镜像/制品仍可用
+  5. 使用 AskUserQuestion 与用户确认回滚演练状态
+- **输出**：回滚方案检查结果
+
+### 阶段 5：签发发布
+
+- **输入**：全部验证结果
+- **处理**：
+  1. 汇总所有检查项状态
+  2. 若全部通过 → 评级 GO，签发发布
+  3. 若存在非关键问题但可接受 → 评级 GO WITH CONCERNS
+  4. 若存在关键问题 → 评级 NO-GO，阻塞发布
+  5. 使用 Write 生成签发报告 `docs/release/{版本}-launch-signoff.md`
+- **输出**：发布签发报告
+
+## 协作协议引用
+
+- 遵循 `.claude/docs/coding-standards.md` 编码规范
+- 签发报告写入 `docs/release/` 目录
+- NO-GO 评级严禁发布，需修复后重新验证
+- 签发需用户最终确认
+
+## 推荐下一步
+
+发布后使用 `/smoke-check` 验证生产环境核心路径。使用 `/day-one-patch` 准备首日已知问题补丁。使用 `/changelog` 与 `/patch-notes` 同步发布说明。

@@ -1,0 +1,10 @@
+﻿version: 1.0.0
+project: software-engineering-studios
+platform: workbuddy
+description: 软件工程工作室 WorkBuddy 适配清单
+skills-count: 74
+agents-count: 40
+rules-count: 11
+hooks-support: false
+mcp-support: true
+
