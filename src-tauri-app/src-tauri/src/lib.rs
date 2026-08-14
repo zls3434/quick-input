@@ -77,20 +77,29 @@ fn toggle_autostart(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
     }
 }
 
-/// 打开设置窗口
-#[tauri::command]
-fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+/// 显示设置窗口（托盘菜单与前端命令共用）
+///
+/// 设置窗口在启动时默认加载根页面（浮层页），打开前必须先导航到
+/// `/settings`，否则窗口会显示浮层按钮列表而非配置管理界面。
+pub fn show_settings_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
-        // 确保设置窗口加载设置页而非根页面（根页面是浮层页，会调用 get_buttons）
         let url = if cfg!(debug_assertions) {
             "http://localhost:1420/settings".to_string()
         } else {
             "http://tauri.localhost/settings".to_string()
         };
-        let _ = window.navigate(url.parse::<tauri::Url>().map_err(|e| e.to_string())?);
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
+        if let Ok(url) = url.parse::<tauri::Url>() {
+            let _ = window.navigate(url);
+        }
+        let _ = window.show();
+        let _ = window.set_focus();
     }
+}
+
+/// 打开设置窗口
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    show_settings_window(&app);
     Ok(())
 }
 

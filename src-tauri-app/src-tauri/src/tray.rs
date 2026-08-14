@@ -46,10 +46,9 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(move |app, event| match event.id().as_ref() {
             MENU_TOGGLE => toggle_overlay(app),
             MENU_SETTINGS => {
-                if let Some(window) = app.get_webview_window("settings") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                // 与 open_settings 命令共用：先导航到 /settings 再显示，
+                // 否则窗口会显示浮层页（无配置管理按钮）
+                crate::show_settings_window(app);
             }
             MENU_QUIT => {
                 // 弹出退出确认对话框
