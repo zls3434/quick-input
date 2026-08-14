@@ -116,14 +116,16 @@ fn add_button(
     if config.buttons.iter().any(|b| b.id == id) {
         return Err(format!("按钮 ID '{id}' 已存在"));
     }
-    config.buttons.push(ButtonConfig {
+    // 先在副本上修改并校验，校验通过后才应用到实际配置（避免失败时污染内存配置）
+    let mut probe = config.clone();
+    probe.buttons.push(ButtonConfig {
         id,
         label,
         content,
         comment,
     });
-    // 保存前统一校验
-    config.validate().map_err(|e| e.to_string())?;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.buttons = probe.buttons;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -141,15 +143,18 @@ fn update_button(
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
-    if let Some(btn) = config.buttons.iter_mut().find(|b| b.id == id) {
-        btn.label = label;
-        btn.content = content;
-        btn.comment = comment;
-    } else {
-        return Err(format!("按钮 ID '{id}' 不存在"));
-    }
-    // 保存前统一校验
-    config.validate().map_err(|e| e.to_string())?;
+    // 先在副本上修改并校验，校验通过后才应用到实际配置
+    let mut probe = config.clone();
+    let btn = probe
+        .buttons
+        .iter_mut()
+        .find(|b| b.id == id)
+        .ok_or_else(|| format!("按钮 ID '{id}' 不存在"))?;
+    btn.label = label;
+    btn.content = content;
+    btn.comment = comment;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.buttons = probe.buttons;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -164,12 +169,15 @@ fn delete_button(
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
-    let len_before = config.buttons.len();
-    config.buttons.retain(|b| b.id != id);
-    if config.buttons.len() == len_before {
+    // 先在副本上删除并校验，校验通过后才应用到实际配置
+    let mut probe = config.clone();
+    let len_before = probe.buttons.len();
+    probe.buttons.retain(|b| b.id != id);
+    if probe.buttons.len() == len_before {
         return Err(format!("按钮 ID '{id}' 不存在"));
     }
-    config.validate().map_err(|e| e.to_string())?;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.buttons = probe.buttons;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -199,12 +207,14 @@ fn add_profile(
     {
         return Err(format!("进程 '{process_name}' 已有映射"));
     }
-    config.profiles.push(AppProfile {
+    // 先在副本上修改并校验，校验通过后才应用到实际配置
+    let mut probe = config.clone();
+    probe.profiles.push(AppProfile {
         process_name,
         buttons,
     });
-    // 保存前统一校验
-    config.validate().map_err(|e| e.to_string())?;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.profiles = probe.profiles;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -220,18 +230,17 @@ fn update_profile(
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
-    if let Some(profile) = config
+    // 先在副本上修改并校验，校验通过后才应用到实际配置
+    let mut probe = config.clone();
+    let profile = probe
         .profiles
         .iter_mut()
         .find(|p| p.process_name.eq_ignore_ascii_case(&process_name))
-    {
-        profile.process_name = process_name;
-        profile.buttons = buttons;
-    } else {
-        return Err("进程映射不存在".to_string());
-    }
-    // 保存前统一校验
-    config.validate().map_err(|e| e.to_string())?;
+        .ok_or_else(|| "进程映射不存在".to_string())?;
+    profile.process_name = process_name;
+    profile.buttons = buttons;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.profiles = probe.profiles;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -246,14 +255,17 @@ fn delete_profile(
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
-    let len_before = config.profiles.len();
-    config
+    // 先在副本上删除并校验，校验通过后才应用到实际配置
+    let mut probe = config.clone();
+    let len_before = probe.profiles.len();
+    probe
         .profiles
         .retain(|p| !p.process_name.eq_ignore_ascii_case(&process_name));
-    if config.profiles.len() == len_before {
+    if probe.profiles.len() == len_before {
         return Err(format!("进程 '{process_name}' 映射不存在"));
     }
-    config.validate().map_err(|e| e.to_string())?;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.profiles = probe.profiles;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
