@@ -1,0 +1,47 @@
+[package]
+name = "quickinput"
+version = "0.1.0"
+description = "QuickInput - 桌面快捷输入工具"
+authors = ["zls3434"]
+edition = "2021"
+
+[lib]
+name = "quickinput_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Tauri CLI (tauri build) 会自动注入 --features custom-protocol，
+# 用于在生产模式通过 tauri:// 协议提供嵌入的前端资源。
+# 该 feature 转发到 tauri 的 custom-protocol 特性。
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["default", "tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# 窗口系统层
+raw-window-handle = "0.6"
+anyhow = "1"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+
+# Windows 平台
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Accessibility",
+  "Win32_System_Threading",
+  "Win32_System_Diagnostics_ToolHelp",
+] }
+
+# 配置管理（引用 quickinput-config 库路径）
+quickinput-config = { path = "../../src/backend" }

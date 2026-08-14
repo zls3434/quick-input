@@ -20,6 +20,9 @@ target/
 .out/
 .cache/
 
+# 应用产物（绿色版复制到项目根目录的 exe）
+QuickInput.exe
+
 # 环境配置
 .env
 .env.local
