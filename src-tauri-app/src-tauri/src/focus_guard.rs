@@ -1,35 +1,71 @@
 //! 焦点保护模块
 //!
-//! 提供 `FocusGuard`，在进入"注入/交互"操作前记录当前前台窗口，
-//! 在操作结束时（RAII 析构）自动恢复前台焦点，确保"点击不抢焦点"的核心体验。
+//! 提供 `FocusGuard`，在进入"注入/交互"操作前记录当前前台窗口与键盘焦点窗口，
+//! 在操作结束时（RAII 析构）自动恢复，确保"点击不抢焦点"的核心体验。
+//!
+//! 记录两类焦点：
+//! - 前台窗口（`GetForegroundWindow`）：注入后恢复窗口激活状态
+//! - 键盘焦点窗口（`GetGUIThreadInfo.hwndFocus`）：注入后恢复键盘输入焦点，
+//!   确保后续输入继续落在原输入框（配合前端 mousedown 拦截，双保险）
 
 /// 焦点保护器（Windows）
 ///
-/// 使用 RAII 模式：构造时记录当前前台窗口句柄，析构时恢复该窗口为前台。
-/// 适用于"注入前记录焦点、注入后恢复"的双保险场景。
+/// 使用 RAII 模式：构造时记录前台窗口与键盘焦点窗口，析构时恢复。
 #[cfg(target_os = "windows")]
 pub struct FocusGuard {
     /// 记录的前台窗口句柄
-    original_focus: Option<windows::Win32::Foundation::HWND>,
+    original_foreground: Option<windows::Win32::Foundation::HWND>,
+    /// 记录的键盘焦点窗口句柄
+    original_keyboard_focus: Option<windows::Win32::Foundation::HWND>,
 }
 
 #[cfg(target_os = "windows")]
 impl FocusGuard {
-    /// 记录当前前台窗口，创建焦点保护器
+    /// 记录当前前台窗口与键盘焦点窗口，创建焦点保护器
     pub fn new() -> Self {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
+        };
+
         unsafe {
-            let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+            let fg = GetForegroundWindow();
+            let mut keyboard_focus = None;
+
+            // 通过前台窗口所在线程的 GUI 线程信息获取键盘焦点窗口
+            if !fg.0.is_null() {
+                let mut pid = 0u32;
+                let tid = GetWindowThreadProcessId(fg, Some(&mut pid));
+                if tid != 0 {
+                    let mut gti = GUITHREADINFO {
+                        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+                        ..Default::default()
+                    };
+                    if GetGUIThreadInfo(tid, &mut gti).is_ok() && !gti.hwndFocus.0.is_null() {
+                        keyboard_focus = Some(gti.hwndFocus);
+                    }
+                }
+            }
+
             Self {
-                original_focus: if fg.0.is_null() { None } else { Some(fg) },
+                original_foreground: if fg.0.is_null() { None } else { Some(fg) },
+                original_keyboard_focus: keyboard_focus,
             }
         }
     }
 
-    /// 主动恢复前台焦点（可提前调用，不依赖析构）
+    /// 主动恢复前台焦点与键盘焦点（可提前调用，不依赖析构）
     pub fn restore(&mut self) {
-        if let Some(hwnd) = self.original_focus.take() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+
+        if let Some(hwnd) = self.original_foreground.take() {
             unsafe {
-                let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+                let _ = SetForegroundWindow(hwnd);
+            }
+        }
+        if let Some(hwnd) = self.original_keyboard_focus.take() {
+            unsafe {
+                let _ = SetFocus(hwnd);
             }
         }
     }

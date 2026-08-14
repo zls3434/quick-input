@@ -49,11 +49,20 @@
   onMount(() => {
     loadButtons();
 
+    // 阻止 mousedown 默认行为：防止 WebView2 点击夺取键盘焦点（保持原输入框焦点）
+    // 拖动区域（data-tauri-drag-region）由系统处理拖拽，跳过不拦截
+    const blockFocusSteal = (e: MouseEvent) => {
+      if ((e.target as HTMLElement | null)?.closest("[data-tauri-drag-region]")) return;
+      e.preventDefault();
+    };
+    window.addEventListener("mousedown", blockFocusSteal, true);
+
     // 监听配置切换事件，收到后自动刷新按钮列表
     const unlisten = listen("ConfigSwitched", () => {
       loadButtons();
     });
     return () => {
+      window.removeEventListener("mousedown", blockFocusSteal, true);
       unlisten.then((fn) => fn());
     };
   });
