@@ -29,13 +29,77 @@
   // 悬浮窗布局状态
   let overlayLayout = $state<"vertical" | "horizontal">("vertical");
   let layoutSaving = $state(false);
+  // 基础配置：自启动 / 默认置顶 / 默认透明度
+  let autostartEnabled = $state(false);
+  let overlayTopmost = $state(true);
+  let overlayOpacity = $state(85);
+  let settingsSaving = $state(false);
+
+  // 透明度可选档位
+  const OPACITY_OPTIONS = [100, 85, 70, 45, 30];
 
   async function loadOverlayLayout() {
     try {
-      const s = await invoke<{ layout: string }>("get_overlay_settings");
+      const s = await invoke<{ layout: string; opacity: number | null; always_on_top: boolean | null }>(
+        "get_overlay_settings"
+      );
       overlayLayout = s.layout === "horizontal" ? "horizontal" : "vertical";
+      overlayOpacity = s.opacity ?? 85;
+      overlayTopmost = s.always_on_top ?? true;
     } catch (e) {
       error = `读取悬浮窗设置失败: ${e}`;
+    }
+  }
+
+  async function loadAutostart() {
+    try {
+      autostartEnabled = await invoke<boolean>("is_autostart_enabled");
+    } catch (e) {
+      console.error("读取自启动状态失败", e);
+    }
+  }
+
+  async function toggleAutostart() {
+    if (settingsSaving) return;
+    settingsSaving = true;
+    error = null;
+    const target = !autostartEnabled;
+    try {
+      await invoke("toggle_autostart", { enable: target });
+      autostartEnabled = target;
+    } catch (e) {
+      error = `切换开机自启动失败: ${e}`;
+    } finally {
+      settingsSaving = false;
+    }
+  }
+
+  async function toggleOverlayTopmost() {
+    if (settingsSaving) return;
+    settingsSaving = true;
+    error = null;
+    const target = !overlayTopmost;
+    try {
+      await invoke("set_overlay_always_on_top", { enabled: target });
+      overlayTopmost = target;
+    } catch (e) {
+      error = `切换默认置顶失败: ${e}`;
+    } finally {
+      settingsSaving = false;
+    }
+  }
+
+  async function setOverlayOpacity(v: number) {
+    if (settingsSaving || overlayOpacity === v) return;
+    settingsSaving = true;
+    error = null;
+    try {
+      await invoke("set_overlay_opacity", { opacity: v });
+      overlayOpacity = v;
+    } catch (e) {
+      error = `设置默认透明度失败: ${e}`;
+    } finally {
+      settingsSaving = false;
     }
   }
 
@@ -297,6 +361,7 @@
     loadButtons();
     loadProfiles();
     loadOverlayLayout();
+    loadAutostart();
   });
 </script>
 
@@ -481,40 +546,95 @@
       </div>
     {:else if activeTab === "overlay"}
       <div class="overlay-settings">
-        <h3>悬浮窗布局</h3>
-        <div class="layout-options">
+        <h3>基础配置</h3>
+
+        <div class="cfg-row">
+          <div class="cfg-info">
+            <div class="cfg-name">开机自启动</div>
+            <div class="cfg-desc">系统登录后自动运行 QuickInput</div>
+          </div>
           <button
-            class="layout-option"
-            class:active={overlayLayout === "vertical"}
-            disabled={layoutSaving}
-            onclick={() => switchLayout("vertical")}
+            class="toggle"
+            class:on={autostartEnabled}
+            disabled={settingsSaving}
+            onclick={toggleAutostart}
+            aria-label="开机自启动"
           >
-            <div class="layout-preview layout-preview-v">
-              <span></span><span></span><span></span>
-            </div>
-            <div class="layout-option-text">
-              <div class="layout-name">竖向排列</div>
-              <div class="layout-desc">默认位于屏幕右上方</div>
-            </div>
-          </button>
-          <button
-            class="layout-option"
-            class:active={overlayLayout === "horizontal"}
-            disabled={layoutSaving}
-            onclick={() => switchLayout("horizontal")}
-          >
-            <div class="layout-preview layout-preview-h">
-              <span></span><span></span><span></span>
-            </div>
-            <div class="layout-option-text">
-              <div class="layout-name">横向排列</div>
-              <div class="layout-desc">默认位于屏幕下方任务栏上方居中</div>
-            </div>
+            <span class="toggle-knob"></span>
           </button>
         </div>
+
+        <div class="cfg-row">
+          <div class="cfg-info">
+            <div class="cfg-name">默认置顶</div>
+            <div class="cfg-desc">悬浮窗始终显示在其他窗口之上</div>
+          </div>
+          <button
+            class="toggle"
+            class:on={overlayTopmost}
+            disabled={settingsSaving}
+            onclick={toggleOverlayTopmost}
+            aria-label="默认置顶"
+          >
+            <span class="toggle-knob"></span>
+          </button>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-name">默认透明度</div>
+          <div class="cfg-desc">新窗口启动时的透明度档位（悬浮窗按钮可随时切换 85% ↔ 30%）</div>
+          <div class="opacity-options">
+            {#each OPACITY_OPTIONS as v (v)}
+              <button
+                class="opacity-option"
+                class:active={overlayOpacity === v}
+                disabled={settingsSaving}
+                onclick={() => setOverlayOpacity(v)}
+              >
+                {v === 100 ? "不透明" : `${v}%`}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-name">默认布局</div>
+          <div class="cfg-desc">新窗口启动时的排列方式，切换后立即生效</div>
+          <div class="layout-options">
+            <button
+              class="layout-option"
+              class:active={overlayLayout === "vertical"}
+              disabled={layoutSaving}
+              onclick={() => switchLayout("vertical")}
+            >
+              <div class="layout-preview layout-preview-v">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="layout-option-text">
+                <div class="layout-name">竖向排列</div>
+                <div class="layout-desc">默认位于屏幕右上方</div>
+              </div>
+            </button>
+            <button
+              class="layout-option"
+              class:active={overlayLayout === "horizontal"}
+              disabled={layoutSaving}
+              onclick={() => switchLayout("horizontal")}
+            >
+              <div class="layout-preview layout-preview-h">
+                <span></span><span></span><span></span>
+              </div>
+              <div class="layout-option-text">
+                <div class="layout-name">横向排列</div>
+                <div class="layout-desc">默认位于屏幕下方任务栏上方居中</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
         <p class="layout-hint">
-          切换后立即生效。拖动悬浮窗顶部标题栏可移动位置，位置会被记忆，
-          下次启动悬浮窗将停留在上次的位置；两种布局各自独立记忆。
+          拖动悬浮窗右上角移动按钮可移动位置，位置会被记忆，下次启动悬浮窗将停留在
+          上次的位置；两种布局各自独立记忆。基础配置保存后立即生效并持久化。
         </p>
       </div>
     {/if}
@@ -656,6 +776,86 @@
     font-size: 13px;
     font-weight: 600;
   }
+  .cfg-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .cfg-info { min-width: 0; }
+  .cfg-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e0e0e0;
+  }
+  .cfg-desc {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+  .cfg-block {
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .cfg-block:last-of-type { border-bottom: none; }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.08);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+    padding: 0;
+  }
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #aaa;
+    transition: left 0.15s, background 0.15s;
+  }
+  .toggle.on {
+    background: rgba(74,124,255,0.35);
+    border-color: #4a7cff;
+  }
+  .toggle.on .toggle-knob {
+    left: 20px;
+    background: #4a7cff;
+  }
+  .toggle:disabled { opacity: 0.5; cursor: default; }
+
+  .opacity-options {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .opacity-option {
+    padding: 5px 14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.12s;
+  }
+  .opacity-option:hover { background: rgba(255,255,255,0.08); color: #ccc; }
+  .opacity-option.active {
+    border-color: #4a7cff;
+    background: rgba(74,124,255,0.15);
+    color: #7ca5ff;
+  }
+  .opacity-option:disabled { opacity: 0.5; cursor: default; }
   .layout-options {
     display: flex;
     gap: 10px;
