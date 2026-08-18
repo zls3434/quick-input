@@ -186,6 +186,20 @@ fn apply_windows_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
             .unwrap_or(true);
 
         unsafe {
+            // 窗口样式：移除最大化/最小化按钮位。
+            // 悬浮窗不是常规窗口，不应响应 Windows 屏幕快捷布局
+            // （Aero Snap / Snap Layouts：拖到屏幕边缘分屏、拖到顶部最大化、
+            //  Win+Up/Win+Arrow 等），这些行为依赖 WS_MAXIMIZEBOX/WS_MINIMIZEBOX；
+            // 保留 WS_THICKFRAME（resizable 位）以维持拖拽缩放。
+            // 注：tauri.conf.json 已配置 maximizable/minimizable=false 从源头禁用，
+            // 此处再兜底一次（tao 在窗口显示时会按 flags 重新应用样式位）。
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(
+                hwnd,
+                GWL_STYLE,
+                style & !(WS_MAXIMIZEBOX.0 as isize) & !(WS_MINIMIZEBOX.0 as isize),
+            );
+
             // 设置扩展样式：不抢焦点 + 工具窗口（不在任务栏）；置顶位按配置设置/清除
             let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             let mut new_style =
