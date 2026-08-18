@@ -39,12 +39,26 @@ fn primary_work_area() -> (i32, i32, i32, i32) {
 
 /// 计算布局默认位置（逻辑坐标）
 ///
-/// - 竖向：屏幕右上角，距顶部约一个标题栏+菜单栏（64 逻辑像素）
+/// - 竖向：屏幕右上角，距顶部约一个标题栏+菜单栏（64 逻辑像素），
+///   距右边留 24 逻辑像素内边距（已补偿窗口边框宽度，保证外框不贴边/不超出屏幕）
 /// - 横向：屏幕底部工作区上方，水平居中
 pub fn default_overlay_position(app: &AppHandle, layout: &str, w: f64, h: f64) -> (i32, i32) {
-    let scale = get_overlay_window(app)
+    let win = get_overlay_window(app);
+    let scale = win
+        .as_ref()
         .and_then(|win| win.scale_factor().ok())
         .unwrap_or(1.0);
+    // 窗口边框宽度补偿（outer - inner，物理像素 → 逻辑像素）：
+    // set_size 的宽 w 是客户区宽度，而定位用的是窗口外框，
+    // 不补偿会导致外框右侧被边框吃掉边距、贴边甚至超出屏幕。
+    let border_w = win
+        .as_ref()
+        .and_then(|win| {
+            let o = win.outer_size().ok()?;
+            let i = win.inner_size().ok()?;
+            Some(o.width.saturating_sub(i.width) as f64 / scale)
+        })
+        .unwrap_or(0.0);
     let (wx, wy, wr, wb) = primary_work_area();
     // 物理坐标 → 逻辑坐标
     let (left, top, right, bottom) = (
@@ -54,11 +68,11 @@ pub fn default_overlay_position(app: &AppHandle, layout: &str, w: f64, h: f64) -
         wb as f64 / scale,
     );
     if layout == "horizontal" {
-        let x = left + (right - left - w) / 2.0;
+        let x = left + (right - left - w - border_w) / 2.0;
         let y = bottom - h - 8.0;
         (x.round() as i32, y.round().max(0.0) as i32)
     } else {
-        let x = right - w - 8.0;
+        let x = right - w - border_w - 24.0;
         let y = top + 64.0;
         (x.round() as i32, y.round().max(0.0) as i32)
     }
