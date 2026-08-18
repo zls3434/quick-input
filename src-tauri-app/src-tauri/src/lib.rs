@@ -296,7 +296,7 @@ fn set_overlay_layout(
 
 /// 保存悬浮窗几何（位置 + 尺寸；拖动/缩放结束后由前端调用，按布局记忆）
 ///
-/// 横向布局高度由内容行数自适应，传入的 h 会被忽略。
+/// 横向布局的高度作为下次启动的初始高度缓存，避免启动闪烁与位移。
 #[tauri::command]
 fn save_overlay_geometry(
     state: tauri::State<AppState>,

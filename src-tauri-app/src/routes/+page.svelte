@@ -127,7 +127,10 @@
     const unlistenMoved = win.onMoved(() => scheduleSaveGeometry());
     const unlistenResized = win.onResized(() => scheduleSaveGeometry());
 
-    // ---- 横向布局高度自适应：按按钮行数调整客户区高度（保持底边不动）----
+    // ---- 横向布局高度自适应：按按钮行数调整客户区高度 ----
+    // 位移策略：首次调整（启动加载）保持顶边不动，避免窗口整体下移；
+    // 之后的调整（用户拖宽导致换行变化）保持底边不动，符合拖动交互习惯。
+    let firstAdjustDone = false;
     let adjustTimer: ReturnType<typeof setTimeout> | null = null;
     const adjustHorizontalHeight = async () => {
       if (layout !== "horizontal") return;
@@ -146,13 +149,14 @@
         const bannerH = banner ? banner.offsetHeight + 8 : 0;
         const targetInnerH = Math.round((TITLE_H + listH + bannerH + 4) * scale);
         if (Math.abs(inner.height - targetInnerH) > 2) {
-          // 保持底边位置：outer 高度差用于位移补偿
+          // 位移补偿：首次保持顶边，之后保持底边
           const chrome = outer.height - inner.height;
           const newOuterH = targetInnerH + chrome;
-          const newY = pos.y + outer.height - newOuterH;
+          const newY = firstAdjustDone ? pos.y + outer.height - newOuterH : pos.y;
           await win.setSize(new PhysicalSize(inner.width, targetInnerH));
           await win.setPosition(new PhysicalPosition(pos.x, newY));
         }
+        firstAdjustDone = true;
       } catch (e) {
         console.error("调整悬浮窗高度失败", e);
       }

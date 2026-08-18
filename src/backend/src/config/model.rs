@@ -68,6 +68,10 @@ pub struct OverlaySettings {
     pub horizontal_y: Option<i32>,
     /// 横向布局记忆宽度（逻辑像素，高度自适应不记忆）
     pub horizontal_w: Option<i32>,
+    /// 横向布局高度缓存（逻辑像素）。
+    /// 仅作为下次启动的初始高度，避免"先高后自适应"的闪烁与位移；
+    /// 运行期高度仍由内容行数决定。
+    pub horizontal_h: Option<i32>,
 }
 
 impl OverlaySettings {
@@ -76,9 +80,10 @@ impl OverlaySettings {
 
     /// 竖向布局默认尺寸（宽高均可拖动调整）
     pub const VERTICAL_DEFAULT_SIZE: (i32, i32) = (300, 400);
-    /// 横向布局默认宽度与单行高度（高度由内容行数自适应）
+    /// 横向布局默认宽度与单行高度初值
+    /// （单行高度与前端渲染一致约 64；有缓存时优先用缓存，见 horizontal_h）
     pub const HORIZONTAL_DEFAULT_W: i32 = 720;
-    pub const HORIZONTAL_ROW_H: i32 = 116;
+    pub const HORIZONTAL_ROW_H: i32 = 64;
 
     /// 生效布局（空值视为竖向默认）
     pub fn effective_layout(&self) -> &'static str {
@@ -106,12 +111,13 @@ impl OverlaySettings {
 
     /// 读取指定布局的记忆尺寸：
     /// - 竖向：返回记忆的宽高（缺省用默认 300x400）
-    /// - 横向：返回记忆宽度（缺省 720）+ 单行高度（高度自适应，由前端按行数修正）
+    /// - 横向：返回记忆宽度（缺省 720）+ 高度缓存（缺省单行初值 64），
+    ///   高度仅是启动初值，运行期由前端按行数自适应修正
     pub fn effective_size(&self, layout: &str) -> (i32, i32) {
         if layout == Self::LAYOUT_HORIZONTAL {
             (
                 self.horizontal_w.unwrap_or(Self::HORIZONTAL_DEFAULT_W),
-                Self::HORIZONTAL_ROW_H,
+                self.horizontal_h.unwrap_or(Self::HORIZONTAL_ROW_H),
             )
         } else {
             (
@@ -122,12 +128,13 @@ impl OverlaySettings {
     }
 
     /// 记录指定布局的几何（位置 + 尺寸）。
-    /// 横向布局高度由内容自适应，忽略传入的 h。
+    /// 横向布局的高度作为启动缓存保存（运行期仍自适应）。
     pub fn set_geometry(&mut self, layout: &str, x: i32, y: i32, w: i32, h: i32) {
         if layout == Self::LAYOUT_HORIZONTAL {
             self.horizontal_x = Some(x);
             self.horizontal_y = Some(y);
             self.horizontal_w = Some(w);
+            self.horizontal_h = Some(h);
         } else {
             self.vertical_x = Some(x);
             self.vertical_y = Some(y);

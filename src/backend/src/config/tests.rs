@@ -553,9 +553,9 @@ fn test_overlay_size_memory_per_layout() {
     // 竖向记忆宽高
     ov.set_geometry("vertical", 5, 6, 340, 520);
     assert_eq!(ov.effective_size("vertical"), (340, 520));
-    // 横向只记忆宽度，高度恒为单行高度
-    ov.set_geometry("horizontal", 7, 8, 900, 300);
-    assert_eq!(ov.effective_size("horizontal"), (900, super::model::OverlaySettings::HORIZONTAL_ROW_H));
+    // 横向记忆宽度与高度缓存（缓存作为下次启动初值）
+    ov.set_geometry("horizontal", 7, 8, 900, 178);
+    assert_eq!(ov.effective_size("horizontal"), (900, 178));
     // 两布局尺寸互不影响
     assert_eq!(ov.effective_size("vertical"), (340, 520));
 }
