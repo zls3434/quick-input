@@ -117,7 +117,7 @@ pub fn get_overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
 /// 应用置顶窗口系统级样式
 ///
 /// 在 Tauri 窗口创建后，通过原生 API 设置窗口扩展样式以确保：
-/// 1. 窗口始终置顶 (WS_EX_TOPMOST / HWND_TOPMOST)
+/// 1. 窗口置顶按配置生效（WS_EX_TOPMOST / HWND_TOPMOST，可取消）
 /// 2. 点击不激活/不抢焦点 (WS_EX_NOACTIVATE)
 /// 3. 不在任务栏显示 (WS_EX_TOOLWINDOW)
 pub fn apply_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
@@ -158,19 +158,38 @@ fn apply_windows_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
     if let RawWindowHandle::Win32(win32) = raw {
         let hwnd = HWND(win32.hwnd.get() as *mut std::ffi::c_void);
 
+        // 置顶状态按配置生效（配置未加载时回退默认置顶，见 current_layout 同款 try_state 模式）
+        let always_on_top = app
+            .try_state::<crate::AppState>()
+            .and_then(|state| {
+                state
+                    .config_manager
+                    .lock()
+                    .ok()
+                    .and_then(|mgr| mgr.config().overlay.clone())
+            })
+            .map(|ov| ov.effective_always_on_top())
+            .unwrap_or(true);
+
         unsafe {
-            // 设置扩展样式：不抢焦点 + 置顶 + 工具窗口（不在任务栏）
+            // 设置扩展样式：不抢焦点 + 工具窗口（不在任务栏）；置顶位按配置设置/清除
             let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            let new_style = ex_style
-                | (WS_EX_NOACTIVATE.0 as isize)
-                | (WS_EX_TOPMOST.0 as isize)
-                | (WS_EX_TOOLWINDOW.0 as isize);
+            let mut new_style =
+                ex_style | (WS_EX_NOACTIVATE.0 as isize) | (WS_EX_TOOLWINDOW.0 as isize);
+            let zorder;
+            if always_on_top {
+                new_style |= WS_EX_TOPMOST.0 as isize;
+                zorder = HWND_TOPMOST;
+            } else {
+                new_style &= !(WS_EX_TOPMOST.0 as isize);
+                zorder = HWND_NOTOPMOST;
+            }
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
 
-            // 确保 Z-order 置顶（仅改样式可能不生效；不带显示标志，维持隐藏）
+            // 确保 Z-order 生效（仅改样式可能不生效；不带显示标志，维持隐藏）
             let _ = SetWindowPos(
                 hwnd,
-                HWND_TOPMOST,
+                zorder,
                 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );

@@ -294,6 +294,48 @@ fn set_overlay_layout(
     Ok(())
 }
 
+/// 切换悬浮窗透明度（保存配置；视觉应用由前端 CSS 完成）
+///
+/// opacity 为百分比（20~100，100=不透明），存整数保证 TOML 可读。
+#[tauri::command]
+fn set_overlay_opacity(
+    state: tauri::State<AppState>,
+    opacity: u8,
+) -> Result<u8, String> {
+    let clamped = opacity.clamp(20, 100);
+    let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    let config = mgr.config_mut();
+    let overlay = config.overlay.get_or_insert_with(Default::default);
+    overlay.opacity = Some(clamped);
+    let probe = config.clone();
+    probe.validate().map_err(|e| e.to_string())?;
+    config.overlay = probe.overlay;
+    mgr.save().map_err(|e| e.to_string())?;
+    Ok(clamped)
+}
+
+/// 切换悬浮窗置顶（保存配置并立即应用到窗口 Z-order）
+#[tauri::command]
+fn set_overlay_always_on_top(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+        let config = mgr.config_mut();
+        let overlay = config.overlay.get_or_insert_with(Default::default);
+        overlay.always_on_top = Some(enabled);
+        let probe = config.clone();
+        probe.validate().map_err(|e| e.to_string())?;
+        config.overlay = probe.overlay;
+        mgr.save().map_err(|e| e.to_string())?;
+    }
+    // 立即生效（同步更新扩展样式与 Z-order）
+    let _ = window::apply_overlay_styles(&app);
+    Ok(())
+}
+
 /// 保存悬浮窗几何（位置 + 尺寸；拖动/缩放结束后由前端调用，按布局记忆）
 ///
 /// 横向布局的高度作为下次启动的初始高度缓存，避免启动闪烁与位移。
@@ -496,6 +538,8 @@ pub fn run() {
             list_window_processes,
             get_overlay_settings,
             set_overlay_layout,
+            set_overlay_opacity,
+            set_overlay_always_on_top,
             save_overlay_geometry,
             update_profile,
             delete_profile,

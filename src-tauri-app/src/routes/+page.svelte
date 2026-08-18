@@ -22,6 +22,8 @@
     horizontal_x: number | null;
     horizontal_y: number | null;
     horizontal_w: number | null;
+    opacity: number | null;
+    always_on_top: boolean | null;
   }
 
   let buttons = $state<ButtonConfig[]>([]);
@@ -31,8 +33,14 @@
   let lastError = $state<string | null>(null);
   // 悬浮窗布局：vertical（竖向）| horizontal（横向）
   let layout = $state<"vertical" | "horizontal">("vertical");
-  // 拖动标题栏高度（横向布局自适应高度的组成部分）
-  const TITLE_H = 26;
+  // 悬浮窗透明度百分比（20~100，配置持久化；CSS 级视觉实现）
+  let overlayOpacityPct = $state(100);
+  // 悬浮窗是否置顶（配置持久化）
+  let alwaysOnTop = $state(true);
+  // 透明度快速切换档位（百分比）：不透明 → 半透明 → 通透
+  const OPACITY_STEPS = [100, 70, 45];
+  // 左上角控制按钮条高度（横向布局自适应高度的组成部分）
+  const CTRL_H = 24;
 
   async function loadLayout() {
     try {
@@ -43,9 +51,44 @@
         // 布局切换后内容重排，触发高度自适应（等待 DOM 更新）
         setTimeout(() => window.dispatchEvent(new CustomEvent("quickinput:adjust-height")), 120);
       }
+      overlayOpacityPct =
+        s.opacity !== null ? Math.min(100, Math.max(20, s.opacity)) : 100;
+      alwaysOnTop = s.always_on_top !== null ? s.always_on_top : true;
     } catch (e) {
       console.error("加载悬浮窗设置失败", e);
     }
+  }
+
+  // 快速切换透明度：循环档位并持久化（百分比）
+  async function cycleOpacity() {
+    const idx = OPACITY_STEPS.indexOf(overlayOpacityPct);
+    const next = OPACITY_STEPS[(idx + 1) % OPACITY_STEPS.length];
+    overlayOpacityPct = next;
+    try {
+      await invoke("set_overlay_opacity", { opacity: next });
+    } catch (e) {
+      console.error("保存透明度失败", e);
+    }
+  }
+
+  // 切换置顶并持久化（后端同步更新窗口 Z-order 与扩展样式）
+  async function toggleAlwaysOnTop() {
+    const next = !alwaysOnTop;
+    alwaysOnTop = next;
+    try {
+      await invoke("set_overlay_always_on_top", { enabled: next });
+    } catch (e) {
+      console.error("保存置顶状态失败", e);
+      alwaysOnTop = !next; // 失败回滚
+    }
+  }
+
+  // 移动按钮：按下即进入窗口拖动模式
+  function onMoveDown(e: MouseEvent) {
+    e.preventDefault();
+    getCurrentWebviewWindow()
+      .startDragging()
+      .catch((err) => console.error("拖动悬浮窗失败", err));
   }
 
   async function loadButtons() {
@@ -87,10 +130,10 @@
     // 窗口初始隐藏（visible:false）避免白屏闪烁，且隐藏窗口中 WebView2
     // 会挂起页面定时器，前端 setTimeout(show) 不可靠。
 
-    // 阻止 mousedown 默认行为：防止 WebView2 点击夺取键盘焦点（保持原输入框焦点）
-    // 拖动区域（data-tauri-drag-region）由系统处理拖拽，跳过不拦截
+    // 阻止 mousedown 默认行为：防止 WebView2 点击夺取键盘焦点（保持原输入框焦点）。
+    // 控制按钮（.ctrl-btn）与功能按钮的 click 不受 preventDefault 影响，
+    // 移动按钮的 startDragging 亦是显式 API 调用。
     const blockFocusSteal = (e: MouseEvent) => {
-      if ((e.target as HTMLElement | null)?.closest("[data-tauri-drag-region]")) return;
       e.preventDefault();
     };
     window.addEventListener("mousedown", blockFocusSteal, true);
@@ -147,11 +190,11 @@
           win.outerSize(),
           win.scaleFactor(),
         ]);
-        // 目标客户区高度（逻辑像素）：标题栏 + 列表实际高度（含 padding）+ 底部余量
+        // 目标客户区高度（逻辑像素）：控制按钮条 + 列表实际高度（含 padding）+ 底部余量
         const listH = list.scrollHeight;
         const banner = document.querySelector<HTMLElement>(".error-banner");
         const bannerH = banner ? banner.offsetHeight + 8 : 0;
-        const targetInnerH = Math.round((TITLE_H + listH + bannerH + 4) * scale);
+        const targetInnerH = Math.round((CTRL_H + listH + bannerH + 4) * scale);
         if (Math.abs(inner.height - targetInnerH) > 2) {
           // 位移补偿：首次保持顶边，之后保持底边
           const chrome = outer.height - inner.height;
@@ -195,8 +238,50 @@
   <title>QuickInput</title>
 </svelte:head>
 
-<main class="quickinput-overlay" class:layout-horizontal={layout === "horizontal"}>
-  <div class="drag-region" data-tauri-drag-region>QuickInput</div>
+<main
+  class="quickinput-overlay"
+  class:layout-horizontal={layout === "horizontal"}
+  style="opacity: {overlayOpacityPct / 100}"
+>
+  <!-- 左上角控制按钮条：移动 / 透明度 / 置顶 -->
+  <div class="ctrl-bar">
+    <button
+      class="ctrl-btn ctrl-move"
+      title="按住拖动悬浮窗"
+      aria-label="移动悬浮窗"
+      onmousedown={onMoveDown}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
+        <path d="M12 3v18M3 12h18" />
+        <path d="M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" />
+      </svg>
+    </button>
+    <button
+      class="ctrl-btn ctrl-opacity"
+      class:is-dimmed={overlayOpacityPct < 100}
+      title="透明度 {overlayOpacityPct}%（点击切换）"
+      aria-label="切换透明度"
+      onclick={cycleOpacity}
+    >
+      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" width="13" height="13" fill="none">
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" />
+      </svg>
+    </button>
+    <button
+      class="ctrl-btn ctrl-topmost"
+      class:is-active={alwaysOnTop}
+      title="{alwaysOnTop ? '已置顶' : '未置顶'}（点击切换）"
+      aria-label="切换置顶"
+      onclick={toggleAlwaysOnTop}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
+        <path d="M9 3h6" />
+        <path d="M10 3v5l-3 4h10l-3-4V3" />
+        <path d="M12 12v9" />
+      </svg>
+    </button>
+  </div>
 
   {#if loading}
     <div class="empty-state">
@@ -278,21 +363,54 @@
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
     user-select: none;
     -webkit-user-select: none;
+    transition: opacity 0.15s ease;
   }
 
-  .drag-region {
-    -webkit-app-region: drag;
-    height: 26px;
+  /* 左上角控制按钮条（取代原标题栏） */
+  .ctrl-bar {
+    height: 24px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+  .ctrl-btn {
+    width: 20px;
+    height: 20px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 1px;
-    color: #8a8a8a;
-    background: rgba(255, 255, 255, 0.04);
+    padding: 0;
+    border: none;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #9a9a9a;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .ctrl-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #ddd;
+  }
+  .ctrl-btn svg {
+    pointer-events: none; /* 保证整按钮命中区域 */
+  }
+  .ctrl-move {
     cursor: grab;
-    flex-shrink: 0;
+  }
+  .ctrl-move:active {
+    cursor: grabbing;
+  }
+  /* 透明度按钮：处于半透明状态时高亮提示 */
+  .ctrl-opacity.is-dimmed {
+    background: rgba(122, 184, 255, 0.22);
+    color: #7ab8ff;
+  }
+  /* 置顶按钮：置顶激活态高亮 */
+  .ctrl-topmost.is-active {
+    background: rgba(122, 184, 255, 0.22);
+    color: #7ab8ff;
   }
 
   .button-list {

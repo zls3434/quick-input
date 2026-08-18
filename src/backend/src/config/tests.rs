@@ -561,6 +561,27 @@ fn test_overlay_size_memory_per_layout() {
 }
 
 #[test]
+fn test_overlay_opacity_and_topmost_defaults() {
+    let ov = super::model::OverlaySettings::default();
+    // 默认：不透明 + 置顶（保持既有行为）
+    assert_eq!(ov.effective_opacity(), 1.0);
+    assert!(ov.effective_always_on_top());
+
+    let mut ov2 = ov.clone();
+    ov2.opacity = Some(45);
+    ov2.always_on_top = Some(false);
+    assert_eq!(ov2.effective_opacity(), 0.45);
+    assert!(!ov2.effective_always_on_top());
+
+    // 越界值夹取到 20%~100%
+    let mut ov3 = ov.clone();
+    ov3.opacity = Some(5);
+    assert_eq!(ov3.effective_opacity(), 0.2);
+    ov3.opacity = Some(200);
+    assert_eq!(ov3.effective_opacity(), 1.0);
+}
+
+#[test]
 fn test_overlay_invalid_layout_rejected() {
     let mut config = create_default_config_fixture();
     config.overlay = Some(super::model::OverlaySettings {

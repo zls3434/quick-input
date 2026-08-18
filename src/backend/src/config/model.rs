@@ -72,6 +72,11 @@ pub struct OverlaySettings {
     /// 仅作为下次启动的初始高度，避免"先高后自适应"的闪烁与位移；
     /// 运行期高度仍由内容行数决定。
     pub horizontal_h: Option<i32>,
+    /// 悬浮窗透明度百分比（20~100，100=不透明；前端 CSS 级实现，None = 不透明）。
+    /// 存整数避免 f32 序列化出 0.44999998807907104 之类的脏值。
+    pub opacity: Option<u8>,
+    /// 悬浮窗是否置顶（None = 置顶）
+    pub always_on_top: Option<bool>,
 }
 
 impl OverlaySettings {
@@ -92,6 +97,16 @@ impl OverlaySettings {
         } else {
             Self::LAYOUT_VERTICAL
         }
+    }
+
+    /// 生效透明度（0.2~1.0）：百分比夹取到 20~100 后换算，默认 1.0 不透明
+    pub fn effective_opacity(&self) -> f32 {
+        self.opacity.unwrap_or(100).clamp(20, 100) as f32 / 100.0
+    }
+
+    /// 生效置顶状态（None 视为置顶，保持既有行为）
+    pub fn effective_always_on_top(&self) -> bool {
+        self.always_on_top.unwrap_or(true)
     }
 
     /// 读取指定布局的记忆位置
