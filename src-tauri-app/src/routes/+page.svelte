@@ -39,8 +39,6 @@
   let alwaysOnTop = $state(true);
   // 透明度快速切换档位（百分比）：不透明 → 半透明 → 通透
   const OPACITY_STEPS = [100, 70, 45];
-  // 左上角控制按钮条高度（横向布局自适应高度的组成部分）
-  const CTRL_H = 24;
 
   async function loadLayout() {
     try {
@@ -69,6 +67,23 @@
     } catch (e) {
       console.error("保存透明度失败", e);
     }
+  }
+
+  // 切换横竖布局（后端应用几何并广播 ConfigSwitched，loadLayout 收到后刷新）
+  async function toggleLayout() {
+    const next = layout === "vertical" ? "horizontal" : "vertical";
+    try {
+      await invoke("set_overlay_layout", { layout: next });
+    } catch (e) {
+      console.error("切换布局失败", e);
+    }
+  }
+
+  // 隐藏悬浮窗（托盘菜单 / 全局热键可再次显示）
+  function hideOverlay() {
+    getCurrentWebviewWindow()
+      .hide()
+      .catch((e) => console.error("隐藏悬浮窗失败", e));
   }
 
   // 切换置顶并持久化（后端同步更新窗口 Z-order 与扩展样式）
@@ -190,11 +205,11 @@
           win.outerSize(),
           win.scaleFactor(),
         ]);
-        // 目标客户区高度（逻辑像素）：控制按钮条 + 列表实际高度（含 padding）+ 底部余量
+        // 目标客户区高度（逻辑像素）：列表实际高度（含 padding，控制条浮动不占空间）+ 余量
         const listH = list.scrollHeight;
         const banner = document.querySelector<HTMLElement>(".error-banner");
         const bannerH = banner ? banner.offsetHeight + 8 : 0;
-        const targetInnerH = Math.round((CTRL_H + listH + bannerH + 4) * scale);
+        const targetInnerH = Math.round((listH + bannerH + 8) * scale);
         if (Math.abs(inner.height - targetInnerH) > 2) {
           // 位移补偿：首次保持顶边，之后保持底边
           const chrome = outer.height - inner.height;
@@ -243,7 +258,7 @@
   class:layout-horizontal={layout === "horizontal"}
   style="opacity: {overlayOpacityPct / 100}"
 >
-  <!-- 左上角控制按钮条：移动 / 透明度 / 置顶 -->
+  <!-- 右上角浮动控制按钮条：移动 / 布局切换 / 透明度 / 置顶 / 隐藏 -->
   <div class="ctrl-bar">
     <button
       class="ctrl-btn ctrl-move"
@@ -254,6 +269,18 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
         <path d="M12 3v18M3 12h18" />
         <path d="M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" />
+      </svg>
+    </button>
+    <button
+      class="ctrl-btn ctrl-layout"
+      title="切换横竖布局（当前：{layout === 'vertical' ? '竖向' : '横向'}）"
+      aria-label="切换横竖布局"
+      onclick={toggleLayout}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
+        <rect x="3" y="6" width="10" height="12" rx="1.5" />
+        <path d="M16 9h4M18 7l-2 2 2 2" />
+        <path d="M16 15h4M18 13l-2 2 2 2" />
       </svg>
     </button>
     <button
@@ -279,6 +306,18 @@
         <path d="M9 3h6" />
         <path d="M10 3v5l-3 4h10l-3-4V3" />
         <path d="M12 12v9" />
+      </svg>
+    </button>
+    <button
+      class="ctrl-btn ctrl-hide"
+      title="隐藏悬浮窗（托盘或全局热键唤回）"
+      aria-label="隐藏悬浮窗"
+      onclick={hideOverlay}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
+        <path d="M3 10s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
+        <circle cx="12" cy="10" r="2.5" />
+        <path d="M4 20L20 4" />
       </svg>
     </button>
   </div>
@@ -366,14 +405,21 @@
     transition: opacity 0.15s ease;
   }
 
-  /* 左上角控制按钮条（取代原标题栏） */
+  /* 右上角浮动控制按钮条（不占布局空间，覆盖于内容之上） */
   .ctrl-bar {
-    height: 24px;
+    position: absolute;
+    top: 3px;
+    right: 5px;
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 0 4px;
-    flex-shrink: 0;
+    z-index: 10;
+    /* 平时低调悬浮，悬停时完全显示 */
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+  }
+  .ctrl-bar:hover {
+    opacity: 1;
   }
   .ctrl-btn {
     width: 20px;
@@ -384,7 +430,7 @@
     padding: 0;
     border: none;
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(40, 40, 44, 0.85);
     color: #9a9a9a;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;

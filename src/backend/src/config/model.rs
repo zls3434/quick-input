@@ -86,9 +86,9 @@ impl OverlaySettings {
     /// 竖向布局默认尺寸（宽高均可拖动调整）
     pub const VERTICAL_DEFAULT_SIZE: (i32, i32) = (300, 400);
     /// 横向布局默认宽度与单行高度初值
-    /// （单行高度与前端渲染一致约 64；有缓存时优先用缓存，见 horizontal_h）
+    /// （单行高度与前端渲染一致约 56；有缓存时优先用缓存，见 horizontal_h）
     pub const HORIZONTAL_DEFAULT_W: i32 = 720;
-    pub const HORIZONTAL_ROW_H: i32 = 64;
+    pub const HORIZONTAL_ROW_H: i32 = 56;
 
     /// 生效布局（空值视为竖向默认）
     pub fn effective_layout(&self) -> &'static str {
