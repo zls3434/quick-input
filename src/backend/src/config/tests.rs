@@ -563,8 +563,8 @@ fn test_overlay_size_memory_per_layout() {
 #[test]
 fn test_overlay_opacity_and_topmost_defaults() {
     let ov = super::model::OverlaySettings::default();
-    // 默认：不透明 + 置顶（保持既有行为）
-    assert_eq!(ov.effective_opacity(), 1.0);
+    // 默认：85% 透明度 + 置顶
+    assert_eq!(ov.effective_opacity(), 0.85);
     assert!(ov.effective_always_on_top());
 
     let mut ov2 = ov.clone();

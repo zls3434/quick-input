@@ -33,8 +33,8 @@
   let lastError = $state<string | null>(null);
   // 悬浮窗布局：vertical（竖向）| horizontal（横向）
   let layout = $state<"vertical" | "horizontal">("vertical");
-  // 悬浮窗透明度百分比（20~100，配置持久化；CSS 级视觉实现）
-  let overlayOpacityPct = $state(100);
+  // 悬浮窗透明度百分比（20~100，默认 85；配置持久化；CSS 级视觉实现）
+  let overlayOpacityPct = $state(85);
   // 悬浮窗是否置顶（配置持久化）
   let alwaysOnTop = $state(true);
   // 透明度切换档位（百分比）：85%（微透）↔ 30%（通透）两档互切
@@ -50,7 +50,7 @@
         setTimeout(() => window.dispatchEvent(new CustomEvent("quickinput:adjust-height")), 120);
       }
       overlayOpacityPct =
-        s.opacity !== null ? Math.min(100, Math.max(20, s.opacity)) : 100;
+        s.opacity !== null ? Math.min(100, Math.max(20, s.opacity)) : 85;
       alwaysOnTop = s.always_on_top !== null ? s.always_on_top : true;
     } catch (e) {
       console.error("加载悬浮窗设置失败", e);
@@ -286,7 +286,7 @@
     </button>
     <button
       class="ctrl-btn ctrl-opacity"
-      class:is-dimmed={overlayOpacityPct < 100}
+      class:is-dimmed={overlayOpacityPct <= 30}
       title="透明度 {overlayOpacityPct}%（点击切换）"
       aria-label="切换透明度"
       onclick={cycleOpacity}
