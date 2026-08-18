@@ -45,9 +45,10 @@ pub struct AppProfile {
     pub buttons: Vec<ButtonConfig>,
 }
 
-/// 悬浮窗设置（布局与各布局的记忆位置）
+/// 悬浮窗设置（布局与各布局的记忆几何）
 ///
-/// 位置使用逻辑坐标存储，按布局分别记忆；未记忆时使用各布局默认位置。
+/// 位置/尺寸使用逻辑坐标存储，按布局分别记忆；未记忆时使用各布局默认值。
+/// 横向布局高度由内容行数自适应，不记忆高度。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct OverlaySettings {
@@ -57,15 +58,27 @@ pub struct OverlaySettings {
     pub vertical_x: Option<i32>,
     /// 竖向布局记忆位置 Y（逻辑坐标）
     pub vertical_y: Option<i32>,
+    /// 竖向布局记忆宽度（逻辑像素）
+    pub vertical_w: Option<i32>,
+    /// 竖向布局记忆高度（逻辑像素）
+    pub vertical_h: Option<i32>,
     /// 横向布局记忆位置 X（逻辑坐标）
     pub horizontal_x: Option<i32>,
     /// 横向布局记忆位置 Y（逻辑坐标）
     pub horizontal_y: Option<i32>,
+    /// 横向布局记忆宽度（逻辑像素，高度自适应不记忆）
+    pub horizontal_w: Option<i32>,
 }
 
 impl OverlaySettings {
     pub const LAYOUT_VERTICAL: &'static str = "vertical";
     pub const LAYOUT_HORIZONTAL: &'static str = "horizontal";
+
+    /// 竖向布局默认尺寸（宽高均可拖动调整）
+    pub const VERTICAL_DEFAULT_SIZE: (i32, i32) = (300, 400);
+    /// 横向布局默认宽度与单行高度（高度由内容行数自适应）
+    pub const HORIZONTAL_DEFAULT_W: i32 = 720;
+    pub const HORIZONTAL_ROW_H: i32 = 116;
 
     /// 生效布局（空值视为竖向默认）
     pub fn effective_layout(&self) -> &'static str {
@@ -91,14 +104,35 @@ impl OverlaySettings {
         }
     }
 
-    /// 记录指定布局的位置
-    pub fn set_position(&mut self, layout: &str, x: i32, y: i32) {
+    /// 读取指定布局的记忆尺寸：
+    /// - 竖向：返回记忆的宽高（缺省用默认 300x400）
+    /// - 横向：返回记忆宽度（缺省 720）+ 单行高度（高度自适应，由前端按行数修正）
+    pub fn effective_size(&self, layout: &str) -> (i32, i32) {
+        if layout == Self::LAYOUT_HORIZONTAL {
+            (
+                self.horizontal_w.unwrap_or(Self::HORIZONTAL_DEFAULT_W),
+                Self::HORIZONTAL_ROW_H,
+            )
+        } else {
+            (
+                self.vertical_w.unwrap_or(Self::VERTICAL_DEFAULT_SIZE.0),
+                self.vertical_h.unwrap_or(Self::VERTICAL_DEFAULT_SIZE.1),
+            )
+        }
+    }
+
+    /// 记录指定布局的几何（位置 + 尺寸）。
+    /// 横向布局高度由内容自适应，忽略传入的 h。
+    pub fn set_geometry(&mut self, layout: &str, x: i32, y: i32, w: i32, h: i32) {
         if layout == Self::LAYOUT_HORIZONTAL {
             self.horizontal_x = Some(x);
             self.horizontal_y = Some(y);
+            self.horizontal_w = Some(w);
         } else {
             self.vertical_x = Some(x);
             self.vertical_y = Some(y);
+            self.vertical_w = Some(w);
+            self.vertical_h = Some(h);
         }
     }
 }

@@ -530,12 +530,34 @@ fn test_overlay_default_layout_is_vertical() {
 #[test]
 fn test_overlay_position_saved_per_layout() {
     let mut ov = super::model::OverlaySettings::default();
-    ov.set_position("horizontal", 100, 200);
+    ov.set_geometry("horizontal", 100, 200, 720, 116);
     assert_eq!(ov.saved_position("horizontal"), Some((100, 200)));
     assert_eq!(ov.saved_position("vertical"), None, "横向记忆不应影响竖向");
-    ov.set_position("vertical", 10, 20);
+    ov.set_geometry("vertical", 10, 20, 320, 500);
     assert_eq!(ov.saved_position("vertical"), Some((10, 20)));
     assert_eq!(ov.saved_position("horizontal"), Some((100, 200)));
+}
+
+#[test]
+fn test_overlay_size_memory_per_layout() {
+    let mut ov = super::model::OverlaySettings::default();
+    // 默认尺寸
+    assert_eq!(
+        ov.effective_size("vertical"),
+        super::model::OverlaySettings::VERTICAL_DEFAULT_SIZE
+    );
+    assert_eq!(
+        ov.effective_size("horizontal"),
+        (super::model::OverlaySettings::HORIZONTAL_DEFAULT_W, super::model::OverlaySettings::HORIZONTAL_ROW_H)
+    );
+    // 竖向记忆宽高
+    ov.set_geometry("vertical", 5, 6, 340, 520);
+    assert_eq!(ov.effective_size("vertical"), (340, 520));
+    // 横向只记忆宽度，高度恒为单行高度
+    ov.set_geometry("horizontal", 7, 8, 900, 300);
+    assert_eq!(ov.effective_size("horizontal"), (900, super::model::OverlaySettings::HORIZONTAL_ROW_H));
+    // 两布局尺寸互不影响
+    assert_eq!(ov.effective_size("vertical"), (340, 520));
 }
 
 #[test]

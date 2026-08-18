@@ -294,18 +294,22 @@ fn set_overlay_layout(
     Ok(())
 }
 
-/// 保存悬浮窗位置（拖动结束后由前端调用，按布局记忆）
+/// 保存悬浮窗几何（位置 + 尺寸；拖动/缩放结束后由前端调用，按布局记忆）
+///
+/// 横向布局高度由内容行数自适应，传入的 h 会被忽略。
 #[tauri::command]
-fn save_overlay_position(
+fn save_overlay_geometry(
     state: tauri::State<AppState>,
     layout: String,
     x: i32,
     y: i32,
+    w: i32,
+    h: i32,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
     let overlay = config.overlay.get_or_insert_with(Default::default);
-    overlay.set_position(&layout, x, y);
+    overlay.set_geometry(&layout, x, y, w, h);
     let probe = config.clone();
     probe.validate().map_err(|e| e.to_string())?;
     config.overlay = probe.overlay;
@@ -489,7 +493,7 @@ pub fn run() {
             list_window_processes,
             get_overlay_settings,
             set_overlay_layout,
-            save_overlay_position,
+            save_overlay_geometry,
             update_profile,
             delete_profile,
             validate_config,

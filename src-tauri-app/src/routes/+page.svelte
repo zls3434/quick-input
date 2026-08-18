@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+  import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
   import Tooltip from "$lib/Tooltip.svelte";
 
   interface ButtonConfig {
@@ -16,8 +17,11 @@
     layout: string;
     vertical_x: number | null;
     vertical_y: number | null;
+    vertical_w: number | null;
+    vertical_h: number | null;
     horizontal_x: number | null;
     horizontal_y: number | null;
+    horizontal_w: number | null;
   }
 
   let buttons = $state<ButtonConfig[]>([]);
@@ -27,11 +31,18 @@
   let lastError = $state<string | null>(null);
   // 悬浮窗布局：vertical（竖向）| horizontal（横向）
   let layout = $state<"vertical" | "horizontal">("vertical");
+  // 拖动标题栏高度（横向布局自适应高度的组成部分）
+  const TITLE_H = 26;
 
   async function loadLayout() {
     try {
       const s = await invoke<OverlaySettings>("get_overlay_settings");
-      layout = s.layout === "horizontal" ? "horizontal" : "vertical";
+      const newLayout = s.layout === "horizontal" ? "horizontal" : "vertical";
+      if (newLayout !== layout) {
+        layout = newLayout;
+        // 布局切换后内容重排，触发高度自适应（等待 DOM 更新）
+        setTimeout(() => window.dispatchEvent(new CustomEvent("quickinput:adjust-height")), 120);
+      }
     } catch (e) {
       console.error("加载悬浮窗设置失败", e);
     }
@@ -47,6 +58,8 @@
       console.error(e);
     } finally {
       loading = false;
+      // 按钮列表变化可能改变横向布局行数，通知高度自适应（监听在 onMount 注册）
+      window.dispatchEvent(new CustomEvent("quickinput:adjust-height"));
     }
   }
 
@@ -84,27 +97,88 @@
       loadLayout();
     });
 
-    // 拖动结束后记忆窗口位置（防抖 600ms，按当前布局保存）
-    let saveTimer: ReturnType<typeof setTimeout> | null = null;
     const win = getCurrentWebviewWindow();
-    const unlistenMoved = win.onMoved(async ({ payload }) => {
+
+    // ---- 几何记忆：拖动/缩放结束后防抖保存位置与尺寸 ----
+    // 尺寸使用 innerSize（客户区）：setSize 的参数语义即客户区，
+    // 若用 outerSize（含不可见边框）保存/恢复会造成每次重启尺寸漂移。
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleSaveGeometry = () => {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
         try {
-          const scale = await win.scaleFactor();
-          const x = Math.round(payload.x / scale);
-          const y = Math.round(payload.y / scale);
-          await invoke("save_overlay_position", { layout, x, y });
+          const [pos, inner, scale] = await Promise.all([
+            win.outerPosition(),
+            win.innerSize(),
+            win.scaleFactor(),
+          ]);
+          await invoke("save_overlay_geometry", {
+            layout,
+            x: Math.round(pos.x / scale),
+            y: Math.round(pos.y / scale),
+            w: Math.round(inner.width / scale),
+            h: Math.round(inner.height / scale),
+          });
         } catch (e) {
-          console.error("保存悬浮窗位置失败", e);
+          console.error("保存悬浮窗几何失败", e);
         }
       }, 600);
-    });
+    };
+    const unlistenMoved = win.onMoved(() => scheduleSaveGeometry());
+    const unlistenResized = win.onResized(() => scheduleSaveGeometry());
+
+    // ---- 横向布局高度自适应：按按钮行数调整客户区高度（保持底边不动）----
+    let adjustTimer: ReturnType<typeof setTimeout> | null = null;
+    const adjustHorizontalHeight = async () => {
+      if (layout !== "horizontal") return;
+      const list = document.querySelector<HTMLElement>(".button-list");
+      if (!list) return;
+      try {
+        const [pos, inner, outer, scale] = await Promise.all([
+          win.outerPosition(),
+          win.innerSize(),
+          win.outerSize(),
+          win.scaleFactor(),
+        ]);
+        // 目标客户区高度（逻辑像素）：标题栏 + 列表实际高度（含 padding）+ 底部余量
+        const listH = list.scrollHeight;
+        const banner = document.querySelector<HTMLElement>(".error-banner");
+        const bannerH = banner ? banner.offsetHeight + 8 : 0;
+        const targetInnerH = Math.round((TITLE_H + listH + bannerH + 4) * scale);
+        if (Math.abs(inner.height - targetInnerH) > 2) {
+          // 保持底边位置：outer 高度差用于位移补偿
+          const chrome = outer.height - inner.height;
+          const newOuterH = targetInnerH + chrome;
+          const newY = pos.y + outer.height - newOuterH;
+          await win.setSize(new PhysicalSize(inner.width, targetInnerH));
+          await win.setPosition(new PhysicalPosition(pos.x, newY));
+        }
+      } catch (e) {
+        console.error("调整悬浮窗高度失败", e);
+      }
+    };
+    const scheduleAdjust = () => {
+      if (adjustTimer) clearTimeout(adjustTimer);
+      adjustTimer = setTimeout(adjustHorizontalHeight, 80);
+    };
+    // 按钮增删/布局切换/窗口缩放统一走事件兜底：
+    // - loadButtons 完成后派发（onMount 时的 ResizeObserver 因列表节点
+    //   在 loading 阶段尚不存在而绑定失败，故不依赖它）
+    // - 布局切换时 loadLayout 派发
+    // - 窗口尺寸变化（用户拖宽改变换行）由 onResized 触发
+    const onAdjustEvt = () => scheduleAdjust();
+    window.addEventListener("quickinput:adjust-height", onAdjustEvt);
+    const unlistenResizedAdjust = win.onResized(() => scheduleAdjust());
+    // 首次加载兜底（等待 loading 结束与 DOM 渲染）
+    setTimeout(() => scheduleAdjust(), 300);
 
     return () => {
       window.removeEventListener("mousedown", blockFocusSteal, true);
       unlisten.then((fn) => fn());
       unlistenMoved.then((fn) => fn());
+      unlistenResized.then((fn) => fn());
+      unlistenResizedAdjust.then((fn) => fn());
+      window.removeEventListener("quickinput:adjust-height", onAdjustEvt);
     };
   });
 </script>
@@ -230,6 +304,9 @@
     align-content: flex-start;
     gap: 4px;
     padding: 4px 8px;
+    /* 不纵向拉伸：scrollHeight 反映真实内容行数，
+       避免高度自适应目标随窗口高度虚高导致死循环 */
+    flex: 0 0 auto;
   }
   .layout-horizontal .button-item {
     width: auto;

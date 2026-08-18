@@ -8,19 +8,6 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 /// 浮层窗口的 label（与 tauri.conf.json 中的 label 一致）
 pub const OVERLAY_WINDOW_LABEL: &str = "overlay";
 
-/// 各布局的默认窗口尺寸（逻辑像素）
-pub const VERTICAL_SIZE: (f64, f64) = (300.0, 400.0);
-pub const HORIZONTAL_SIZE: (f64, f64) = (720.0, 116.0);
-
-/// 布局对应的窗口尺寸
-pub fn layout_size(layout: &str) -> (f64, f64) {
-    if layout == "horizontal" {
-        HORIZONTAL_SIZE
-    } else {
-        VERTICAL_SIZE
-    }
-}
-
 /// 获取主屏工作区（物理像素，排除任务栏）
 #[cfg(target_os = "windows")]
 fn primary_work_area() -> (i32, i32, i32, i32) {
@@ -77,15 +64,15 @@ pub fn default_overlay_position(app: &AppHandle, layout: &str, w: f64, h: f64) -
     }
 }
 
-/// 应用悬浮窗几何：按布局设置尺寸，并定位到记忆位置或默认位置
+/// 应用悬浮窗几何：按布局设置尺寸（优先记忆尺寸），并定位到记忆位置或默认位置
+///
+/// 横向布局的高度此处设为单行高度，前端加载后按按钮行数自适应修正。
 pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
     use tauri::LogicalPosition;
 
     let Some(win) = get_overlay_window(app) else {
         return;
     };
-    let (w, h) = layout_size(layout);
-    let _ = win.set_size(tauri::LogicalSize::new(w, h));
 
     let state = app.state::<crate::AppState>();
     let overlay = state
@@ -94,9 +81,12 @@ pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
         .ok()
         .and_then(|mgr| mgr.config().overlay.clone())
         .unwrap_or_default();
+    let (w, h) = overlay.effective_size(layout);
+    let _ = win.set_size(tauri::LogicalSize::new(w as f64, h as f64));
+
     let (x, y) = overlay
         .saved_position(layout)
-        .unwrap_or_else(|| default_overlay_position(app, layout, w, h));
+        .unwrap_or_else(|| default_overlay_position(app, layout, w as f64, h as f64));
     let _ = win.set_position(LogicalPosition::new(x, y));
 }
 
