@@ -31,6 +31,7 @@ pub fn default_config() -> ConfigFile {
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".to_string(),
+                name: None,
                 buttons: vec![
                     ButtonConfig {
                         id: "fmt".to_string(),
@@ -48,6 +49,7 @@ pub fn default_config() -> ConfigFile {
             },
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
+                name: None,
                 buttons: vec![
                     ButtonConfig {
                         id: "docker-ps".to_string(),

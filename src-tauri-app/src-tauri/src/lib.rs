@@ -9,6 +9,7 @@ mod inject_linux;
 #[cfg(target_os = "macos")]
 mod inject_macos;
 mod inject_windows;
+mod process_list;
 mod tray;
 mod window;
 
@@ -206,6 +207,7 @@ fn add_profile(
     state: tauri::State<AppState>,
     process_name: String,
     buttons: Vec<ButtonConfig>,
+    name: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
@@ -220,6 +222,7 @@ fn add_profile(
     let mut probe = config.clone();
     probe.profiles.push(AppProfile {
         process_name,
+        name,
         buttons,
     });
     probe.validate().map_err(|e| e.to_string())?;
@@ -236,6 +239,7 @@ fn update_profile(
     state: tauri::State<AppState>,
     process_name: String,
     buttons: Vec<ButtonConfig>,
+    name: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
@@ -247,12 +251,19 @@ fn update_profile(
         .find(|p| p.process_name.eq_ignore_ascii_case(&process_name))
         .ok_or_else(|| "进程映射不存在".to_string())?;
     profile.process_name = process_name;
+    profile.name = name;
     profile.buttons = buttons;
     probe.validate().map_err(|e| e.to_string())?;
     config.profiles = probe.profiles;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 枚举拥有可见窗口的运行进程（供配置管理绑定进程选择）
+#[tauri::command]
+fn list_window_processes() -> Result<Vec<process_list::RunningProcess>, String> {
+    Ok(process_list::list_window_processes())
 }
 
 /// 删除一个应用画像
@@ -428,6 +439,7 @@ pub fn run() {
             delete_button,
             get_profiles,
             add_profile,
+            list_window_processes,
             update_profile,
             delete_profile,
             validate_config,

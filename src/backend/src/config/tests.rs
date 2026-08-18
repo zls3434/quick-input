@@ -45,6 +45,7 @@ fn create_default_config_fixture() -> ConfigFile {
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".to_string(),
+                name: None,
                 buttons: vec![
                     create_button_fixture("fmt", "Format", "cargo fmt"),
                     create_button_fixture("build", "Build", "cargo build"),
@@ -52,6 +53,7 @@ fn create_default_config_fixture() -> ConfigFile {
             },
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
+                name: None,
                 buttons: vec![
                     create_button_fixture("kubectl-get-pods", "Get Pods", "kubectl get pods"),
                     create_button_fixture("docker-ps", "Docker PS", "docker ps"),
@@ -282,6 +284,7 @@ fn create_profile_config_fixture() -> ConfigFile {
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".to_string(),
+                name: None,
                 buttons: vec![
                     create_button_fixture("fmt", "Format", "cargo fmt"),
                     create_button_fixture("build", "Build", "cargo build"),
@@ -289,6 +292,7 @@ fn create_profile_config_fixture() -> ConfigFile {
             },
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
+                name: None,
                 buttons: vec![create_button_fixture("docker-ps", "Docker PS", "docker ps")],
             },
         ],
@@ -460,6 +464,7 @@ fn test_validate_empty_process_name_fails() {
         buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "".into(),
+            name: None,
             buttons: vec![],
         }],
     };
@@ -475,10 +480,12 @@ fn test_validate_duplicate_process_name_case_insensitive_fails() {
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".into(),
+                name: None,
                 buttons: vec![],
             },
             AppProfile {
                 process_name: "code.EXE".into(),
+                name: None,
                 buttons: vec![],
             },
         ],
@@ -494,6 +501,7 @@ fn test_validate_valid_profile_ok() {
         buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "Code.exe".into(),
+            name: None,
             buttons: vec![create_button_fixture("p1", "P1", "p1c")],
         }],
     };

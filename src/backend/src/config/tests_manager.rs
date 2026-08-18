@@ -124,6 +124,7 @@ fn test_ac2_3_save_preserves_existing_fields() {
     config.buttons.push(button("b1", "content-1"));
     config.profiles.push(super::model::AppProfile {
         process_name: "Code.exe".to_string(),
+        name: None,
         buttons: vec![button("p1", "fmt")],
     });
     mgr.config_mut().buttons = config.buttons.clone();

@@ -12,7 +12,13 @@
 
   interface AppProfile {
     process_name: string;
+    name: string | null;
     buttons: ButtonConfig[];
+  }
+
+  interface RunningProcess {
+    process_name: string;
+    window_title: string;
   }
 
   let buttons = $state<ButtonConfig[]>([]);
@@ -53,9 +59,29 @@
   let profEditing = $state(false);
   let profEditingOriginal = $state("");
   let profProcessName = $state("");
+  let profName = $state("");
   // 已选按钮（完整 ButtonConfig，保留原 id/label/content/comment）
   let profSelectedButtons = $state<ButtonConfig[]>([]);
   let profSaveError = $state<string | null>(null);
+  // 运行进程列表（供绑定进程选择）
+  let runningProcesses = $state<RunningProcess[]>([]);
+  let processesLoading = $state(false);
+
+  async function loadRunningProcesses() {
+    processesLoading = true;
+    try {
+      runningProcesses = await invoke<RunningProcess[]>("list_window_processes");
+    } catch (e) {
+      runningProcesses = [];
+    } finally {
+      processesLoading = false;
+    }
+  }
+
+  function onPickProcess(ev: Event) {
+    const v = (ev.currentTarget as HTMLSelectElement).value;
+    if (v) profProcessName = v;
+  }
 
   // 候选按钮：合并默认按钮与所有映射的按钮，按 id 去重，排除已选
   const candidateButtons = $derived.by(() => {
@@ -76,16 +102,20 @@
     profEditing = true;
     profEditingOriginal = "";
     profProcessName = "";
+    profName = "";
     profSelectedButtons = [];
     profSaveError = null;
+    loadRunningProcesses();
   }
 
   function startEditProfile(p: AppProfile) {
     profEditing = true;
     profEditingOriginal = p.process_name;
     profProcessName = p.process_name;
+    profName = p.name ?? "";
     profSelectedButtons = p.buttons.map((b) => ({ ...b }));
     profSaveError = null;
+    loadRunningProcesses();
   }
 
   function cancelProfileEdit() {
@@ -109,12 +139,13 @@
       return;
     }
     const btnList = profSelectedButtons.map((b) => ({ ...b }));
+    const displayName = profName.trim() || null;
 
     try {
       if (profEditingOriginal === "") {
-        await invoke("add_profile", { processName: name, buttons: btnList });
+        await invoke("add_profile", { processName: name, buttons: btnList, name: displayName });
       } else {
-        await invoke("update_profile", { processName: name, buttons: btnList });
+        await invoke("update_profile", { processName: name, buttons: btnList, name: displayName });
       }
       profEditing = false;
       await loadProfiles();
@@ -337,7 +368,22 @@
             <div class="form-error">{profSaveError}</div>
           {/if}
           <label>
-            进程名 <input bind:value={profProcessName} placeholder="如 Code.exe、WindowsTerminal.exe" />
+            映射名称（可选） <input bind:value={profName} placeholder="自定义显示名，如 我的浏览器；留空显示进程名" />
+          </label>
+          <label>
+            绑定进程 <input bind:value={profProcessName} placeholder="可手动输入，如 Code.exe" />
+          </label>
+          <label>
+            从运行窗口选择
+            <div class="process-picker">
+              <select onchange={onPickProcess} class="process-select">
+                <option value="">{processesLoading ? "加载中..." : `选择进程（共 ${runningProcesses.length} 个）`}</option>
+                {#each runningProcesses as p (p.process_name)}
+                  <option value={p.process_name}>{p.process_name} — {p.window_title.slice(0, 40)}</option>
+                {/each}
+              </select>
+              <button class="btn-secondary" onclick={loadRunningProcesses}>刷新</button>
+            </div>
           </label>
 
           <div class="picker-section">
@@ -388,8 +434,8 @@
         {#each profiles as p (p.process_name)}
           <div class="button-row">
             <div class="button-info">
-              <span class="btn-label">{p.process_name}</span>
-              <span class="btn-id">{p.buttons.length} 个按钮</span>
+              <span class="btn-label">{p.name || p.process_name}</span>
+              <span class="btn-id">{p.name ? p.process_name : ""} {p.buttons.length} 个按钮</span>
             </div>
             <div class="button-actions">
               <button class="btn-edit" onclick={() => startEditProfile(p)}>编辑</button>
@@ -583,6 +629,26 @@
 
   .picker-section {
     margin-bottom: 10px;
+  }
+
+  .process-picker {
+    display: flex;
+    gap: 6px;
+    margin-top: 3px;
+  }
+  .process-select {
+    flex: 1;
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 12px;
+    box-sizing: border-box;
+  }
+  .process-select:focus {
+    outline: none;
+    border-color: #4a7cff;
   }
   .section-title {
     font-size: 12px;

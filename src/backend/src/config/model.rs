@@ -37,6 +37,9 @@ pub struct ButtonConfig {
 pub struct AppProfile {
     /// 进程名称（必填），如 `"Code.exe"`、`"WindowsTerminal.exe"`
     pub process_name: String,
+    /// 映射自定义名称（可选），用于设置界面展示；缺失时显示进程名
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// 该进程下的快捷按钮列表（必填，但可空）
     #[serde(default)]
     pub buttons: Vec<ButtonConfig>,
