@@ -9,6 +9,7 @@ use super::model::{AppProfile, ButtonConfig, ConfigFile};
 pub fn default_config() -> ConfigFile {
 ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![
             ButtonConfig {
                 id: "git-status".to_string(),

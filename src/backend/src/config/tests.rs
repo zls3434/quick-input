@@ -33,6 +33,7 @@ fn create_button_fixture_with_comment(
 fn create_default_config_fixture() -> ConfigFile {
 ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![
             create_button_fixture("git-status", "Git Status", "git status"),
             create_button_fixture("git-pull", "Git Pull", "git pull --rebase"),
@@ -282,6 +283,7 @@ fn test_empty_config_is_valid() {
 fn create_profile_config_fixture() -> ConfigFile {
 ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![create_button_fixture("default-1", "Default", "echo default")],
         profiles: vec![
             AppProfile {
@@ -415,6 +417,7 @@ fn test_validate_empty_config_ok() {
 fn test_validate_valid_buttons_ok() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![
             create_button_fixture("a", "A", "aaa"),
             create_button_fixture("b", "B", "bbb"),
@@ -429,6 +432,7 @@ buttons: vec![
 fn test_validate_empty_id_fails() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![create_button_fixture("", "A", "aaa")],
         profiles: vec![],
     };
@@ -441,6 +445,7 @@ buttons: vec![create_button_fixture("", "A", "aaa")],
 fn test_validate_empty_label_fails() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![create_button_fixture("a", " ", "aaa")],
         profiles: vec![],
     };
@@ -453,6 +458,7 @@ buttons: vec![create_button_fixture("a", " ", "aaa")],
 fn test_validate_duplicate_id_fails() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![
             create_button_fixture("a", "A", "aaa"),
             create_button_fixture("a", "B", "bbb"),
@@ -468,6 +474,7 @@ buttons: vec![
 fn test_validate_empty_process_name_fails() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "".into(),
@@ -484,6 +491,7 @@ buttons: vec![],
 fn test_validate_duplicate_process_name_case_insensitive_fails() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![],
         profiles: vec![
             AppProfile {
@@ -507,6 +515,7 @@ buttons: vec![],
 fn test_validate_valid_profile_ok() {
     let config = ConfigFile {
                 overlay: None,
+                shortcuts: None,
 buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "Code.exe".into(),
@@ -604,3 +613,4 @@ content = "aa"
     let config: ConfigFile = toml::from_str(toml_str).unwrap();
     assert!(config.overlay.is_none());
 }
+

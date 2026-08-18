@@ -45,6 +45,30 @@ pub struct AppProfile {
     pub buttons: Vec<ButtonConfig>,
 }
 
+/// 快捷键配置
+///
+/// 全局快捷键使用 `tauri-plugin-global-shortcut` 的字符串格式，
+/// 如 `"CTRL+SHIFT+SPACE"`。键名大小写不敏感。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct ShortcutSettings {
+    /// 显示/隐藏悬浮窗热键（None = 默认 CTRL+SHIFT+SPACE）
+    pub show_overlay: Option<String>,
+}
+
+impl ShortcutSettings {
+    /// 默认"显示/隐藏悬浮窗"热键
+    pub const DEFAULT_SHOW_OVERLAY: &'static str = "CTRL+SHIFT+SPACE";
+
+    /// 生效的"显示/隐藏悬浮窗"热键
+    pub fn effective_show_overlay(&self) -> String {
+        self.show_overlay
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| Self::DEFAULT_SHOW_OVERLAY.to_string())
+    }
+}
+
 /// 悬浮窗设置（布局与各布局的记忆几何）
 ///
 /// 位置/尺寸使用逻辑坐标存储，按布局分别记忆；未记忆时使用各布局默认值。
@@ -174,6 +198,9 @@ pub struct ConfigFile {
     /// 悬浮窗设置（可选）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<OverlaySettings>,
+    /// 快捷键设置（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcuts: Option<ShortcutSettings>,
 }
 
 impl ConfigFile {

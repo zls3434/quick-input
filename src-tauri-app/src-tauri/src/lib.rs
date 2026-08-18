@@ -461,6 +461,97 @@ fn reload_config(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result
     Ok(())
 }
 
+/// 读取快捷键配置（缺省返回默认热键）
+#[tauri::command]
+fn get_shortcuts(state: tauri::State<AppState>) -> Result<quickinput_config::config::model::ShortcutSettings, String> {
+    let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    Ok(mgr.config().shortcuts.clone().unwrap_or_default())
+}
+
+/// 设置快捷键：校验格式 → 检测冲突 → 保存配置 → 更新全局热键注册
+///
+/// 冲突检测：新键与当前已注册热键（包括本应用正在使用的旧键）相同时视为可用；
+/// 与其他软件冲突时返回错误，配置不保存。
+#[tauri::command]
+fn set_shortcut(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    name: String,
+    value: String,
+) -> Result<String, String> {
+    if name != "show_overlay" {
+        return Err(format!("不支持的快捷键项 [{name}]"));
+    }
+    let value = value.trim().to_uppercase();
+
+    // 1. 格式校验 + 冲突检测（探测前先校验格式，避免无效键名注册报错）
+    let parsed: tauri_plugin_global_shortcut::Shortcut = value
+        .parse()
+        .map_err(|e| format!("快捷键格式无效 [{value}]: {e}"))?;
+    let _ = parsed;
+
+    // 2. 冲突检测：若新键等于当前生效键则跳过（用户未改）；否则探测占用
+    let current = {
+        let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+        mgr.config()
+            .shortcuts
+            .clone()
+            .unwrap_or_default()
+            .effective_show_overlay()
+    };
+    if value != current {
+        let available = global_shortcut::is_shortcut_available(&value)
+            .map_err(|e| format!("冲突检测失败: {e}"))?;
+        if !available {
+            return Err(format!(
+                "快捷键 [{value}] 已被其他软件占用，请更换组合键"
+            ));
+        }
+    }
+
+    // 3. 保存配置
+    {
+        let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+        let config = mgr.config_mut();
+        let shortcuts = config.shortcuts.get_or_insert_with(Default::default);
+        shortcuts.show_overlay = Some(value.clone());
+        let probe = config.clone();
+        probe.validate().map_err(|e| e.to_string())?;
+        config.shortcuts = probe.shortcuts;
+        mgr.save().map_err(|e| e.to_string())?;
+    }
+
+    // 4. 更新全局热键注册（注册失败回滚配置，避免配置与运行不一致）
+    if let Err(e) = global_shortcut::update_global_shortcut(&app, &value) {
+        // 回滚配置
+        if let Ok(mut mgr) = state.config_manager.lock() {
+            let _ = mgr.load();
+        }
+        return Err(format!("热键注册失败: {e}"));
+    }
+
+    Ok(value)
+}
+
+/// 检测快捷键是否可用（是否与其他软件冲突）
+///
+/// 返回 true = 未被占用可安全使用；false = 已被其他软件注册。
+#[tauri::command]
+fn check_shortcut_available(shortcut: String) -> Result<bool, String> {
+    // 先做格式校验
+    let _: tauri_plugin_global_shortcut::Shortcut = shortcut
+        .parse()
+        .map_err(|e| format!("快捷键格式无效 [{shortcut}]: {e}"))?;
+    global_shortcut::is_shortcut_available(&shortcut)
+}
+
+/// 重置悬浮窗位置和大小（托盘菜单入口；此处注册命令便于调用/测试）
+#[tauri::command]
+fn reset_overlay_geometry_command(app: tauri::AppHandle) -> Result<(), String> {
+    window::reset_overlay_geometry(&app);
+    Ok(())
+}
+
 /// 消费焦点监听事件，焦点切换时更新当前进程并发射 ConfigSwitched
 fn run_focus_listener(app: tauri::AppHandle) {
     #[cfg(target_os = "windows")]
@@ -541,11 +632,15 @@ pub fn run() {
             set_overlay_opacity,
             set_overlay_always_on_top,
             save_overlay_geometry,
+            reset_overlay_geometry_command,
             update_profile,
             delete_profile,
             validate_config,
             export_config,
             import_config,
+            get_shortcuts,
+            set_shortcut,
+            check_shortcut_available,
         ])
         // 浮层页面加载完成后：先应用样式与几何，再显示窗口。
         // 窗口初始隐藏（tauri.conf.json visible:false）以避免 WebView2 内容未就绪时

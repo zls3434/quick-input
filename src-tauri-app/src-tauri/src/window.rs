@@ -155,6 +155,34 @@ pub fn get_overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(OVERLAY_WINDOW_LABEL)
 }
 
+/// 重置悬浮窗位置与大小：清除两布局的记忆几何，恢复默认几何
+///
+/// 托盘菜单"重置悬浮窗位置和大小"入口。清除记忆后立即应用默认
+/// 位置（屏幕右上角留边距）与默认尺寸。
+pub fn reset_overlay_geometry(app: &AppHandle) {
+    if get_overlay_window(app).is_none() {
+        return;
+    }
+    // 清除记忆几何并保存
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        if let Ok(mut mgr) = state.config_manager.lock() {
+            if let Some(overlay) = mgr.config_mut().overlay.as_mut() {
+                overlay.vertical_x = None;
+                overlay.vertical_y = None;
+                overlay.vertical_w = None;
+                overlay.vertical_h = None;
+                overlay.horizontal_x = None;
+                overlay.horizontal_y = None;
+                overlay.horizontal_w = None;
+                overlay.horizontal_h = None;
+            }
+            let _ = mgr.save();
+        }
+    }
+    // 应用当前布局的默认几何（含屏幕内钳制）
+    apply_overlay_geometry(app, &current_layout(app));
+}
+
 /// 应用置顶窗口系统级样式
 ///
 /// 在 Tauri 窗口创建后，通过原生 API 设置窗口扩展样式以确保：

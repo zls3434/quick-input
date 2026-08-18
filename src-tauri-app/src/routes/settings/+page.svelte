@@ -35,8 +35,78 @@
   let overlayOpacity = $state(85);
   let settingsSaving = $state(false);
 
+  // 快捷键配置：显示/隐藏悬浮窗
+  let showOverlayShortcut = $state("CTRL+SHIFT+SPACE");
+  // 捕获模式：true 时监听按键组合
+  let shortcutCapturing = $state(false);
+  // 冲突检测结果提示
+  let shortcutStatus = $state<{ kind: "ok" | "conflict" | "err"; text: string } | null>(null);
+
   // 透明度可选档位
   const OPACITY_OPTIONS = [100, 85, 70, 45, 30];
+
+  async function loadShortcuts() {
+    try {
+      const s = await invoke<{ show_overlay: string | null }>("get_shortcuts");
+      showOverlayShortcut = s.show_overlay?.trim() || "CTRL+SHIFT+SPACE";
+    } catch (e) {
+      console.error("读取快捷键配置失败", e);
+    }
+  }
+
+  // 捕获键盘组合键：修饰键 + 一个按键
+  function onShortcutKeydown(e: KeyboardEvent) {
+    if (!shortcutCapturing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const mods: string[] = [];
+    if (e.ctrlKey) mods.push("CTRL");
+    if (e.shiftKey) mods.push("SHIFT");
+    if (e.altKey) mods.push("ALT");
+    if (e.metaKey) mods.push("WIN");
+    const key = e.code.startsWith("Key")
+      ? e.code.slice(3)
+      : e.code.startsWith("Digit")
+        ? e.code.slice(5)
+        : e.code.startsWith("Numpad")
+          ? `NUMPAD${e.code.slice(6)}`
+          : e.key.length === 1
+            ? e.key.toUpperCase()
+            : e.key.toUpperCase();
+    // 仅修饰键按下时等待主键
+    if (["CONTROL", "SHIFT", "ALT", "META", "WIN"].includes(key)) return;
+    if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+      shortcutStatus = { kind: "err", text: "请至少包含一个修饰键（Ctrl/Shift/Alt/Win）" };
+      return;
+    }
+    const combo = [...mods, key].join("+");
+    shortcutCapturing = false;
+    void saveShortcut(combo);
+  }
+
+  async function saveShortcut(combo: string) {
+    shortcutStatus = null;
+    try {
+      // 后端执行：格式校验 → 冲突检测 → 保存 → 重注册热键
+      const saved = await invoke<string>("set_shortcut", { name: "show_overlay", value: combo });
+      showOverlayShortcut = saved;
+      shortcutStatus = { kind: "ok", text: "已保存，新快捷键即时生效" };
+    } catch (e) {
+      shortcutStatus = { kind: "conflict", text: `${e}` };
+    }
+  }
+
+  async function checkShortcutAvailability(combo: string) {
+    shortcutStatus = null;
+    try {
+      const available = await invoke<boolean>("check_shortcut_available", { shortcut: combo });
+      shortcutStatus = available
+        ? { kind: "ok", text: "该快捷键可用" }
+        : { kind: "conflict", text: "该快捷键已被其他软件占用" };
+    } catch (e) {
+      shortcutStatus = { kind: "err", text: `${e}` };
+    }
+  }
 
   async function loadOverlayLayout() {
     try {
@@ -362,6 +432,7 @@
     loadProfiles();
     loadOverlayLayout();
     loadAutostart();
+    loadShortcuts();
   });
 </script>
 
@@ -595,6 +666,53 @@
               </button>
             {/each}
           </div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-name">快捷键</div>
+          <div class="cfg-desc">全局快捷键，按下即可显示/隐藏悬浮窗</div>
+          <div class="shortcut-row">
+            <span class="shortcut-key">{shortcutCapturing ? "请按下新的组合键…" : showOverlayShortcut}</span>
+            {#if shortcutCapturing}
+              <button
+                class="btn-cancel"
+                onclick={() => {
+                  shortcutStatus = null;
+                  shortcutCapturing = false;
+                }}
+              >
+                取消
+              </button>
+            {:else}
+              <button
+                class="btn-secondary"
+                disabled={settingsSaving}
+                onclick={() => {
+                  shortcutStatus = null;
+                  shortcutCapturing = true;
+                  // 捕获区获得焦点后才能接收 keydown
+                  setTimeout(() => {
+                    document.querySelector<HTMLElement>(".shortcut-capture")?.focus();
+                  }, 0);
+                }}
+              >
+                修改
+              </button>
+            {/if}
+          </div>
+          {#if shortcutCapturing}
+            <div class="shortcut-capture" onkeydown={onShortcutKeydown} tabindex="0">
+              按下新的组合键（如 Ctrl+Alt+F2）。仅按修饰键会继续等待主键。
+            </div>
+          {:else if shortcutStatus}
+            <div
+              class="shortcut-status"
+              class:ok={shortcutStatus.kind === "ok"}
+              class:conflict={shortcutStatus.kind === "conflict"}
+            >
+              {shortcutStatus.text}
+            </div>
+          {/if}
         </div>
 
         <div class="cfg-block">
@@ -856,6 +974,49 @@
     color: #7ca5ff;
   }
   .opacity-option:disabled { opacity: 0.5; cursor: default; }
+
+  .shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .shortcut-key {
+    flex: 1;
+    padding: 6px 10px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+    color: #7ca5ff;
+    letter-spacing: 0.5px;
+    user-select: none;
+  }
+  .shortcut-capture {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(74,124,255,0.1);
+    border: 1px dashed #4a7cff;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #9db9ff;
+    outline: none;
+  }
+  .shortcut-status {
+    margin-top: 8px;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  .shortcut-status.ok {
+    color: #4caf50;
+    background: rgba(76,175,80,0.1);
+  }
+  .shortcut-status.conflict {
+    color: #e74c3c;
+    background: rgba(231,76,60,0.1);
+  }
   .layout-options {
     display: flex;
     gap: 10px;
