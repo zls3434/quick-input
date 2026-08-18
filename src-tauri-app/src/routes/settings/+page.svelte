@@ -53,14 +53,30 @@
   let profEditing = $state(false);
   let profEditingOriginal = $state("");
   let profProcessName = $state("");
-  let profButtonsText = $state("");
+  // 已选按钮（完整 ButtonConfig，保留原 id/label/content/comment）
+  let profSelectedButtons = $state<ButtonConfig[]>([]);
   let profSaveError = $state<string | null>(null);
+
+  // 候选按钮：合并默认按钮与所有映射的按钮，按 id 去重，排除已选
+  const candidateButtons = $derived.by(() => {
+    const all = [...buttons, ...profiles.flatMap((p) => p.buttons)];
+    const seen = new Set<string>();
+    const unique: ButtonConfig[] = [];
+    for (const b of all) {
+      if (!seen.has(b.id)) {
+        seen.add(b.id);
+        unique.push(b);
+      }
+    }
+    const selectedIds = new Set(profSelectedButtons.map((b) => b.id));
+    return unique.filter((b) => !selectedIds.has(b.id));
+  });
 
   function startNewProfile() {
     profEditing = true;
     profEditingOriginal = "";
     profProcessName = "";
-    profButtonsText = "";
+    profSelectedButtons = [];
     profSaveError = null;
   }
 
@@ -68,14 +84,21 @@
     profEditing = true;
     profEditingOriginal = p.process_name;
     profProcessName = p.process_name;
-    // 每行一个按钮：内容
-    profButtonsText = p.buttons.map((b) => b.content).join("\n");
+    profSelectedButtons = p.buttons.map((b) => ({ ...b }));
     profSaveError = null;
   }
 
   function cancelProfileEdit() {
     profEditing = false;
     profSaveError = null;
+  }
+
+  function addToSelected(btn: ButtonConfig) {
+    profSelectedButtons = [...profSelectedButtons, { ...btn }];
+  }
+
+  function removeFromSelected(index: number) {
+    profSelectedButtons = profSelectedButtons.filter((_, i) => i !== index);
   }
 
   async function saveProfile() {
@@ -85,17 +108,7 @@
       profSaveError = "进程名不能为空";
       return;
     }
-    // 把每行内容构造成按钮（id/label 用行内容，comment 为空）
-    const btnList: ButtonConfig[] = profButtonsText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line, i) => ({
-        id: `${name}-${i}`,
-        label: line,
-        content: line,
-        comment: null,
-      }));
+    const btnList = profSelectedButtons.map((b) => ({ ...b }));
 
     try {
       if (profEditingOriginal === "") {
@@ -326,10 +339,44 @@
           <label>
             进程名 <input bind:value={profProcessName} placeholder="如 Code.exe、WindowsTerminal.exe" />
           </label>
-          <label>
-            按钮内容（每行一个）
-            <textarea bind:value={profButtonsText} rows="5" placeholder="git status&#10;git pull&#10;git commit -m "></textarea>
-          </label>
+
+          <div class="picker-section">
+            <div class="section-title">已选按钮（{profSelectedButtons.length}）</div>
+            {#if profSelectedButtons.length === 0}
+              <div class="picker-empty">尚未选择按钮</div>
+            {:else}
+              <div class="picker-list">
+                {#each profSelectedButtons as b, i (b.id)}
+                  <div class="picker-row">
+                    <div class="picker-info">
+                      <span class="p-label">{b.label}</span>
+                      <span class="p-content">{b.content}</span>
+                    </div>
+                    <button class="btn-delete" onclick={() => removeFromSelected(i)}>移除</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div class="picker-section">
+            <div class="section-title">从现有按钮添加</div>
+            {#if candidateButtons.length === 0}
+              <div class="picker-empty">没有可选按钮，请先在"默认按钮"或其他映射中创建</div>
+            {:else}
+              <div class="picker-list">
+                {#each candidateButtons as b (b.id)}
+                  <div class="picker-row">
+                    <div class="picker-info">
+                      <span class="p-label">{b.label}</span>
+                      <span class="p-content">{b.content}</span>
+                    </div>
+                    <button class="btn-edit" onclick={() => addToSelected(b)}>添加</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
           <div class="form-actions">
             <button class="btn-cancel" onclick={cancelProfileEdit}>取消</button>
             <button class="btn-primary" onclick={saveProfile}>保存</button>
@@ -528,28 +575,60 @@
     outline: none;
     border-color: #4a7cff;
   }
-  .edit-form textarea {
-    display: block;
-    width: 100%;
-    margin-top: 3px;
-    padding: 6px 8px;
-    background: rgba(0,0,0,0.3);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 4px;
-    color: #e0e0e0;
-    font-size: 12px;
-    box-sizing: border-box;
-    resize: vertical;
-    font-family: monospace;
-  }
-  .edit-form textarea:focus {
-    outline: none;
-    border-color: #4a7cff;
-  }
   .form-error {
     color: #e74c3c;
     font-size: 12px;
     margin-bottom: 8px;
+  }
+
+  .picker-section {
+    margin-bottom: 10px;
+  }
+  .section-title {
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 6px;
+  }
+  .picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .picker-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 8px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .picker-row:hover { background: rgba(255,255,255,0.06); }
+  .picker-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+  }
+  .p-label {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .p-content {
+    font-size: 11px;
+    color: #999;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .picker-empty {
+    font-size: 11px;
+    color: #666;
+    padding: 6px 0;
   }
   .form-actions {
     display: flex;
