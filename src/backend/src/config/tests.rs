@@ -31,8 +31,9 @@ fn create_button_fixture_with_comment(
 
 /// 创建测试用的默认配置夹具
 fn create_default_config_fixture() -> ConfigFile {
-    ConfigFile {
-        buttons: vec![
+ConfigFile {
+                overlay: None,
+buttons: vec![
             create_button_fixture("git-status", "Git Status", "git status"),
             create_button_fixture("git-pull", "Git Pull", "git pull --rebase"),
             create_button_fixture_with_comment(
@@ -279,8 +280,9 @@ fn test_empty_config_is_valid() {
 
 /// 创建仅含 profiles 的测试配置夹具
 fn create_profile_config_fixture() -> ConfigFile {
-    ConfigFile {
-        buttons: vec![create_button_fixture("default-1", "Default", "echo default")],
+ConfigFile {
+                overlay: None,
+buttons: vec![create_button_fixture("default-1", "Default", "echo default")],
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".to_string(),
@@ -412,7 +414,8 @@ fn test_validate_empty_config_ok() {
 #[test]
 fn test_validate_valid_buttons_ok() {
     let config = ConfigFile {
-        buttons: vec![
+                overlay: None,
+buttons: vec![
             create_button_fixture("a", "A", "aaa"),
             create_button_fixture("b", "B", "bbb"),
         ],
@@ -425,7 +428,8 @@ fn test_validate_valid_buttons_ok() {
 #[test]
 fn test_validate_empty_id_fails() {
     let config = ConfigFile {
-        buttons: vec![create_button_fixture("", "A", "aaa")],
+                overlay: None,
+buttons: vec![create_button_fixture("", "A", "aaa")],
         profiles: vec![],
     };
     let err = config.validate().unwrap_err();
@@ -436,7 +440,8 @@ fn test_validate_empty_id_fails() {
 #[test]
 fn test_validate_empty_label_fails() {
     let config = ConfigFile {
-        buttons: vec![create_button_fixture("a", " ", "aaa")],
+                overlay: None,
+buttons: vec![create_button_fixture("a", " ", "aaa")],
         profiles: vec![],
     };
     let err = config.validate().unwrap_err();
@@ -447,7 +452,8 @@ fn test_validate_empty_label_fails() {
 #[test]
 fn test_validate_duplicate_id_fails() {
     let config = ConfigFile {
-        buttons: vec![
+                overlay: None,
+buttons: vec![
             create_button_fixture("a", "A", "aaa"),
             create_button_fixture("a", "B", "bbb"),
         ],
@@ -461,7 +467,8 @@ fn test_validate_duplicate_id_fails() {
 #[test]
 fn test_validate_empty_process_name_fails() {
     let config = ConfigFile {
-        buttons: vec![],
+                overlay: None,
+buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "".into(),
             name: None,
@@ -476,7 +483,8 @@ fn test_validate_empty_process_name_fails() {
 #[test]
 fn test_validate_duplicate_process_name_case_insensitive_fails() {
     let config = ConfigFile {
-        buttons: vec![],
+                overlay: None,
+buttons: vec![],
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".into(),
@@ -498,7 +506,8 @@ fn test_validate_duplicate_process_name_case_insensitive_fails() {
 #[test]
 fn test_validate_valid_profile_ok() {
     let config = ConfigFile {
-        buttons: vec![],
+                overlay: None,
+buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "Code.exe".into(),
             name: None,
@@ -506,4 +515,49 @@ fn test_validate_valid_profile_ok() {
         }],
     };
     assert!(config.validate().is_ok());
+}
+// ============================================================
+// 悬浮窗设置：布局与位置记忆
+// ============================================================
+
+#[test]
+fn test_overlay_default_layout_is_vertical() {
+    let ov = super::model::OverlaySettings::default();
+    assert_eq!(ov.effective_layout(), "vertical");
+    assert_eq!(ov.saved_position("vertical"), None);
+}
+
+#[test]
+fn test_overlay_position_saved_per_layout() {
+    let mut ov = super::model::OverlaySettings::default();
+    ov.set_position("horizontal", 100, 200);
+    assert_eq!(ov.saved_position("horizontal"), Some((100, 200)));
+    assert_eq!(ov.saved_position("vertical"), None, "横向记忆不应影响竖向");
+    ov.set_position("vertical", 10, 20);
+    assert_eq!(ov.saved_position("vertical"), Some((10, 20)));
+    assert_eq!(ov.saved_position("horizontal"), Some((100, 200)));
+}
+
+#[test]
+fn test_overlay_invalid_layout_rejected() {
+    let mut config = create_default_config_fixture();
+    config.overlay = Some(super::model::OverlaySettings {
+        layout: "diagonal".to_string(),
+        ..Default::default()
+    });
+    let err = config.validate().unwrap_err();
+    assert_eq!(err.field, "overlay.layout");
+}
+
+#[test]
+fn test_overlay_settings_backward_compatible() {
+    // 旧配置无 overlay 字段应正常解析
+    let toml_str = r#"
+[[buttons]]
+id = "a"
+label = "A"
+content = "aa"
+"#;
+    let config: ConfigFile = toml::from_str(toml_str).unwrap();
+    assert!(config.overlay.is_none());
 }

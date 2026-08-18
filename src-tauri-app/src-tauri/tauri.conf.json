@@ -24,12 +24,12 @@
         "skipTaskbar": true,
         "transparent": true,
         "visible": true,
-        "center": true,
         "focus": false
       },
       {
         "label": "settings",
         "title": "QuickInput 设置",
+        "url": "/settings",
         "width": 520,
         "height": 480,
         "resizable": true,

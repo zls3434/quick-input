@@ -45,6 +45,64 @@ pub struct AppProfile {
     pub buttons: Vec<ButtonConfig>,
 }
 
+/// 悬浮窗设置（布局与各布局的记忆位置）
+///
+/// 位置使用逻辑坐标存储，按布局分别记忆；未记忆时使用各布局默认位置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct OverlaySettings {
+    /// 布局："vertical"（竖向，默认）或 "horizontal"（横向）
+    pub layout: String,
+    /// 竖向布局记忆位置 X（逻辑坐标）
+    pub vertical_x: Option<i32>,
+    /// 竖向布局记忆位置 Y（逻辑坐标）
+    pub vertical_y: Option<i32>,
+    /// 横向布局记忆位置 X（逻辑坐标）
+    pub horizontal_x: Option<i32>,
+    /// 横向布局记忆位置 Y（逻辑坐标）
+    pub horizontal_y: Option<i32>,
+}
+
+impl OverlaySettings {
+    pub const LAYOUT_VERTICAL: &'static str = "vertical";
+    pub const LAYOUT_HORIZONTAL: &'static str = "horizontal";
+
+    /// 生效布局（空值视为竖向默认）
+    pub fn effective_layout(&self) -> &'static str {
+        if self.layout == Self::LAYOUT_HORIZONTAL {
+            Self::LAYOUT_HORIZONTAL
+        } else {
+            Self::LAYOUT_VERTICAL
+        }
+    }
+
+    /// 读取指定布局的记忆位置
+    pub fn saved_position(&self, layout: &str) -> Option<(i32, i32)> {
+        if layout == Self::LAYOUT_HORIZONTAL {
+            match (self.horizontal_x, self.horizontal_y) {
+                (Some(x), Some(y)) => Some((x, y)),
+                _ => None,
+            }
+        } else {
+            match (self.vertical_x, self.vertical_y) {
+                (Some(x), Some(y)) => Some((x, y)),
+                _ => None,
+            }
+        }
+    }
+
+    /// 记录指定布局的位置
+    pub fn set_position(&mut self, layout: &str, x: i32, y: i32) {
+        if layout == Self::LAYOUT_HORIZONTAL {
+            self.horizontal_x = Some(x);
+            self.horizontal_y = Some(y);
+        } else {
+            self.vertical_x = Some(x);
+            self.vertical_y = Some(y);
+        }
+    }
+}
+
 /// 顶层配置文件
 ///
 /// 包含默认按钮列表与可选的按应用配置画像。
@@ -57,6 +115,9 @@ pub struct ConfigFile {
     /// 按应用配置画像列表（可选，默认为空）
     #[serde(default)]
     pub profiles: Vec<AppProfile>,
+    /// 悬浮窗设置（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<OverlaySettings>,
 }
 
 impl ConfigFile {
@@ -136,6 +197,20 @@ impl ConfigFile {
                     });
                 }
                 p_seen.push(&btn.id);
+            }
+        }
+
+        // 校验悬浮窗设置
+        if let Some(overlay) = &self.overlay {
+            let layout = overlay.layout.trim();
+            if !layout.is_empty()
+                && layout != OverlaySettings::LAYOUT_VERTICAL
+                && layout != OverlaySettings::LAYOUT_HORIZONTAL
+            {
+                return Err(ValidationError {
+                    field: "overlay.layout".into(),
+                    message: format!("悬浮窗布局 '{layout}' 无效（应为 vertical 或 horizontal）"),
+                });
             }
         }
 

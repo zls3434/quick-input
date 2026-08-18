@@ -80,18 +80,10 @@ fn toggle_autostart(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
 
 /// 显示设置窗口（托盘菜单与前端命令共用）
 ///
-/// 设置窗口在启动时默认加载根页面（浮层页），打开前必须先导航到
-/// `/settings`，否则窗口会显示浮层按钮列表而非配置管理界面。
+/// 设置窗口在 tauri.conf.json 中已配置初始 URL 为 `/settings`，
+/// 此处只需显示并聚焦。
 pub fn show_settings_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
-        let url = if cfg!(debug_assertions) {
-            "http://localhost:1420/settings".to_string()
-        } else {
-            "http://tauri.localhost/settings".to_string()
-        };
-        if let Ok(url) = url.parse::<tauri::Url>() {
-            let _ = window.navigate(url);
-        }
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -264,6 +256,61 @@ fn update_profile(
 #[tauri::command]
 fn list_window_processes() -> Result<Vec<process_list::RunningProcess>, String> {
     Ok(process_list::list_window_processes())
+}
+
+/// 获取悬浮窗设置（无配置时返回默认值：竖向布局）
+#[tauri::command]
+fn get_overlay_settings(
+    state: tauri::State<AppState>,
+) -> Result<quickinput_config::config::model::OverlaySettings, String> {
+    let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    Ok(mgr.config().overlay.clone().unwrap_or_default())
+}
+
+/// 切换悬浮窗布局（保存配置并立即应用窗口几何）
+#[tauri::command]
+fn set_overlay_layout(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    layout: String,
+) -> Result<(), String> {
+    if layout != "vertical" && layout != "horizontal" {
+        return Err(format!("布局 '{layout}' 无效（应为 vertical 或 horizontal）"));
+    }
+    {
+        let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+        let config = mgr.config_mut();
+        let overlay = config.overlay.get_or_insert_with(Default::default);
+        overlay.layout = layout.clone();
+        // 先在副本上校验，校验通过后才保存
+        let probe = config.clone();
+        probe.validate().map_err(|e| e.to_string())?;
+        config.overlay = probe.overlay;
+        mgr.save().map_err(|e| e.to_string())?;
+    }
+    // 应用新布局的尺寸与位置（优先该布局的记忆位置）
+    window::apply_overlay_geometry(&app, &layout);
+    app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 保存悬浮窗位置（拖动结束后由前端调用，按布局记忆）
+#[tauri::command]
+fn save_overlay_position(
+    state: tauri::State<AppState>,
+    layout: String,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    let config = mgr.config_mut();
+    let overlay = config.overlay.get_or_insert_with(Default::default);
+    overlay.set_position(&layout, x, y);
+    let probe = config.clone();
+    probe.validate().map_err(|e| e.to_string())?;
+    config.overlay = probe.overlay;
+    mgr.save().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 删除一个应用画像
@@ -440,6 +487,9 @@ pub fn run() {
             get_profiles,
             add_profile,
             list_window_processes,
+            get_overlay_settings,
+            set_overlay_layout,
+            save_overlay_position,
             update_profile,
             delete_profile,
             validate_config,
@@ -482,6 +532,19 @@ pub fn run() {
 
             // 应用系统级置顶/不抢焦点样式
             apply_overlay_styles(app.handle())?;
+
+            // 按配置应用悬浮窗布局几何（尺寸 + 记忆位置或默认位置）
+            {
+                let layout = app
+                    .state::<AppState>()
+                    .config_manager
+                    .lock()
+                    .ok()
+                    .and_then(|mgr| mgr.config().overlay.clone())
+                    .map(|ov| ov.effective_layout().to_string())
+                    .unwrap_or_else(|| "vertical".to_string());
+                window::apply_overlay_geometry(app.handle(), &layout);
+            }
 
             // 设置系统托盘图标与菜单
             if let Err(e) = setup_tray(app.handle()) {

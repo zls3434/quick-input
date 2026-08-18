@@ -7,8 +7,9 @@ use super::model::{AppProfile, ButtonConfig, ConfigFile};
 /// 提供几个示例按钮，方便用户首启后直接体验 QuickInput 的核心功能。
 /// 用户可手动编辑 `default.toml` 自定义。
 pub fn default_config() -> ConfigFile {
-    ConfigFile {
-        buttons: vec![
+ConfigFile {
+                overlay: None,
+buttons: vec![
             ButtonConfig {
                 id: "git-status".to_string(),
                 label: "Git Status".to_string(),

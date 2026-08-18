@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import Tooltip from "$lib/Tooltip.svelte";
 
   interface ButtonConfig {
@@ -11,11 +12,30 @@
     comment: string | null;
   }
 
+  interface OverlaySettings {
+    layout: string;
+    vertical_x: number | null;
+    vertical_y: number | null;
+    horizontal_x: number | null;
+    horizontal_y: number | null;
+  }
+
   let buttons = $state<ButtonConfig[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let injectingId = $state<string | null>(null);
   let lastError = $state<string | null>(null);
+  // 悬浮窗布局：vertical（竖向）| horizontal（横向）
+  let layout = $state<"vertical" | "horizontal">("vertical");
+
+  async function loadLayout() {
+    try {
+      const s = await invoke<OverlaySettings>("get_overlay_settings");
+      layout = s.layout === "horizontal" ? "horizontal" : "vertical";
+    } catch (e) {
+      console.error("加载悬浮窗设置失败", e);
+    }
+  }
 
   async function loadButtons() {
     loading = true;
@@ -48,6 +68,7 @@
 
   onMount(() => {
     loadButtons();
+    loadLayout();
 
     // 阻止 mousedown 默认行为：防止 WebView2 点击夺取键盘焦点（保持原输入框焦点）
     // 拖动区域（data-tauri-drag-region）由系统处理拖拽，跳过不拦截
@@ -57,13 +78,33 @@
     };
     window.addEventListener("mousedown", blockFocusSteal, true);
 
-    // 监听配置切换事件，收到后自动刷新按钮列表
+    // 监听配置切换事件，收到后自动刷新按钮列表与布局
     const unlisten = listen("ConfigSwitched", () => {
       loadButtons();
+      loadLayout();
     });
+
+    // 拖动结束后记忆窗口位置（防抖 600ms，按当前布局保存）
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    const win = getCurrentWebviewWindow();
+    const unlistenMoved = win.onMoved(async ({ payload }) => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        try {
+          const scale = await win.scaleFactor();
+          const x = Math.round(payload.x / scale);
+          const y = Math.round(payload.y / scale);
+          await invoke("save_overlay_position", { layout, x, y });
+        } catch (e) {
+          console.error("保存悬浮窗位置失败", e);
+        }
+      }, 600);
+    });
+
     return () => {
       window.removeEventListener("mousedown", blockFocusSteal, true);
       unlisten.then((fn) => fn());
+      unlistenMoved.then((fn) => fn());
     };
   });
 </script>
@@ -72,7 +113,7 @@
   <title>QuickInput</title>
 </svelte:head>
 
-<main class="quickinput-overlay">
+<main class="quickinput-overlay" class:layout-horizontal={layout === "horizontal"}>
   <div class="drag-region" data-tauri-drag-region>QuickInput</div>
 
   {#if loading}
@@ -179,6 +220,30 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  /* 横向布局：按钮水平排列、自动换行、更紧凑 */
+  .layout-horizontal .button-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    align-content: flex-start;
+    gap: 4px;
+    padding: 4px 8px;
+  }
+  .layout-horizontal .button-item {
+    width: auto;
+    min-width: 72px;
+    flex: 0 1 auto;
+    align-items: center;
+    text-align: center;
+    padding: 4px 10px;
+  }
+  .layout-horizontal .button-comment {
+    display: none; /* 横向条形空间有限，隐藏注释行（悬浮 Tooltip 仍可用） */
+  }
+  .layout-horizontal .error-banner {
+    width: 100%;
   }
 
   .button-list::-webkit-scrollbar {

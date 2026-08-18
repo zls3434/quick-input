@@ -8,6 +8,98 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 /// 浮层窗口的 label（与 tauri.conf.json 中的 label 一致）
 pub const OVERLAY_WINDOW_LABEL: &str = "overlay";
 
+/// 各布局的默认窗口尺寸（逻辑像素）
+pub const VERTICAL_SIZE: (f64, f64) = (300.0, 400.0);
+pub const HORIZONTAL_SIZE: (f64, f64) = (720.0, 116.0);
+
+/// 布局对应的窗口尺寸
+pub fn layout_size(layout: &str) -> (f64, f64) {
+    if layout == "horizontal" {
+        HORIZONTAL_SIZE
+    } else {
+        VERTICAL_SIZE
+    }
+}
+
+/// 获取主屏工作区（物理像素，排除任务栏）
+#[cfg(target_os = "windows")]
+fn primary_work_area() -> (i32, i32, i32, i32) {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SPI_GETWORKAREA,
+    };
+
+    let mut rect = RECT::default();
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some(&mut rect as *mut RECT as *mut std::ffi::c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    if ok.is_ok() {
+        (rect.left, rect.top, rect.right, rect.bottom)
+    } else {
+        (0, 0, 1920, 1040)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn primary_work_area() -> (i32, i32, i32, i32) {
+    (0, 0, 1920, 1040)
+}
+
+/// 计算布局默认位置（逻辑坐标）
+///
+/// - 竖向：屏幕右上角，距顶部约一个标题栏+菜单栏（64 逻辑像素）
+/// - 横向：屏幕底部工作区上方，水平居中
+pub fn default_overlay_position(app: &AppHandle, layout: &str, w: f64, h: f64) -> (i32, i32) {
+    let scale = get_overlay_window(app)
+        .and_then(|win| win.scale_factor().ok())
+        .unwrap_or(1.0);
+    let (wx, wy, wr, wb) = primary_work_area();
+    // 物理坐标 → 逻辑坐标
+    let (left, top, right, bottom) = (
+        wx as f64 / scale,
+        wy as f64 / scale,
+        wr as f64 / scale,
+        wb as f64 / scale,
+    );
+    if layout == "horizontal" {
+        let x = left + (right - left - w) / 2.0;
+        let y = bottom - h - 8.0;
+        (x.round() as i32, y.round().max(0.0) as i32)
+    } else {
+        let x = right - w - 8.0;
+        let y = top + 64.0;
+        (x.round() as i32, y.round().max(0.0) as i32)
+    }
+}
+
+/// 应用悬浮窗几何：按布局设置尺寸，并定位到记忆位置或默认位置
+pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
+    use tauri::LogicalPosition;
+
+    let Some(win) = get_overlay_window(app) else {
+        return;
+    };
+    let (w, h) = layout_size(layout);
+    let _ = win.set_size(tauri::LogicalSize::new(w, h));
+
+    let state = app.state::<crate::AppState>();
+    let overlay = state
+        .config_manager
+        .lock()
+        .ok()
+        .and_then(|mgr| mgr.config().overlay.clone())
+        .unwrap_or_default();
+    let (x, y) = overlay
+        .saved_position(layout)
+        .unwrap_or_else(|| default_overlay_position(app, layout, w, h));
+    let _ = win.set_position(LogicalPosition::new(x, y));
+}
+
 /// 获取浮层窗口句柄
 pub fn get_overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(OVERLAY_WINDOW_LABEL)

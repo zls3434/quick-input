@@ -23,8 +23,35 @@
 
   let buttons = $state<ButtonConfig[]>([]);
   let profiles = $state<AppProfile[]>([]);
-  let activeTab = $state<"buttons" | "profiles">("buttons");
+  let activeTab = $state<"buttons" | "profiles" | "overlay">("buttons");
   let error = $state<string | null>(null);
+
+  // 悬浮窗布局状态
+  let overlayLayout = $state<"vertical" | "horizontal">("vertical");
+  let layoutSaving = $state(false);
+
+  async function loadOverlayLayout() {
+    try {
+      const s = await invoke<{ layout: string }>("get_overlay_settings");
+      overlayLayout = s.layout === "horizontal" ? "horizontal" : "vertical";
+    } catch (e) {
+      error = `读取悬浮窗设置失败: ${e}`;
+    }
+  }
+
+  async function switchLayout(target: "vertical" | "horizontal") {
+    if (layoutSaving || overlayLayout === target) return;
+    layoutSaving = true;
+    error = null;
+    try {
+      await invoke("set_overlay_layout", { layout: target });
+      overlayLayout = target;
+    } catch (e) {
+      error = `切换布局失败: ${e}`;
+    } finally {
+      layoutSaving = false;
+    }
+  }
 
   // 编辑表单状态
   // editMode 独立于 editId：新增时用户输入 ID 后 editId 非空，
@@ -269,6 +296,7 @@
   onMount(() => {
     loadButtons();
     loadProfiles();
+    loadOverlayLayout();
   });
 </script>
 
@@ -301,6 +329,13 @@
         onclick={() => (activeTab = "profiles")}
       >
         应用映射
+      </button>
+      <button
+        class="tab"
+        class:active={activeTab === "overlay"}
+        onclick={() => (activeTab = "overlay")}
+      >
+        悬浮窗
       </button>
     </div>
 
@@ -355,7 +390,7 @@
           </div>
         {/each}
       </div>
-    {:else}
+    {:else if activeTab === "profiles"}
       <div class="toolbar">
         <span class="count">{profiles.length} 个应用映射</span>
         <button class="btn-primary" onclick={startNewProfile}>+ 新增映射</button>
@@ -443,6 +478,44 @@
             </div>
           </div>
         {/each}
+      </div>
+    {:else if activeTab === "overlay"}
+      <div class="overlay-settings">
+        <h3>悬浮窗布局</h3>
+        <div class="layout-options">
+          <button
+            class="layout-option"
+            class:active={overlayLayout === "vertical"}
+            disabled={layoutSaving}
+            onclick={() => switchLayout("vertical")}
+          >
+            <div class="layout-preview layout-preview-v">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="layout-option-text">
+              <div class="layout-name">竖向排列</div>
+              <div class="layout-desc">默认位于屏幕右上方</div>
+            </div>
+          </button>
+          <button
+            class="layout-option"
+            class:active={overlayLayout === "horizontal"}
+            disabled={layoutSaving}
+            onclick={() => switchLayout("horizontal")}
+          >
+            <div class="layout-preview layout-preview-h">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="layout-option-text">
+              <div class="layout-name">横向排列</div>
+              <div class="layout-desc">默认位于屏幕下方任务栏上方居中</div>
+            </div>
+          </button>
+        </div>
+        <p class="layout-hint">
+          切换后立即生效。拖动悬浮窗顶部标题栏可移动位置，位置会被记忆，
+          下次启动悬浮窗将停留在上次的位置；两种布局各自独立记忆。
+        </p>
       </div>
     {/if}
 
@@ -576,6 +649,78 @@
     margin-top: 14px;
     padding-top: 10px;
     border-top: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .overlay-settings h3 {
+    margin: 4px 0 12px 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .layout-options {
+    display: flex;
+    gap: 10px;
+  }
+  .layout-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    cursor: pointer;
+    color: #ccc;
+    text-align: left;
+    transition: all 0.12s;
+  }
+  .layout-option:hover { background: rgba(255,255,255,0.06); }
+  .layout-option.active {
+    border-color: #4a7cff;
+    background: rgba(74,124,255,0.12);
+  }
+  .layout-option:disabled { opacity: 0.6; cursor: default; }
+  .layout-preview {
+    display: flex;
+    gap: 3px;
+    background: rgba(0,0,0,0.35);
+    border-radius: 4px;
+    padding: 6px;
+    flex-shrink: 0;
+  }
+  .layout-preview span {
+    background: rgba(255,255,255,0.35);
+    border-radius: 2px;
+    display: block;
+  }
+  .layout-preview-v {
+    flex-direction: column;
+    width: 28px;
+    height: 44px;
+  }
+  .layout-preview-v span { height: 8px; width: 100%; }
+  .layout-preview-h {
+    flex-direction: row;
+    width: 44px;
+    height: 28px;
+  }
+  .layout-preview-h span { width: 8px; height: 100%; }
+  .layout-option-text { min-width: 0; }
+  .layout-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e0e0e0;
+  }
+  .layout-desc {
+    font-size: 11px;
+    color: #888;
+    margin-top: 3px;
+  }
+  .layout-hint {
+    font-size: 11px;
+    color: #777;
+    line-height: 1.6;
+    margin: 14px 0 0 0;
   }
   .btn-secondary {
     background: rgba(255,255,255,0.08);
