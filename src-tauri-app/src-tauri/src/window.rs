@@ -148,7 +148,7 @@ fn apply_windows_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
                 | (WS_EX_TOOLWINDOW.0 as isize);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
 
-            // 确保 Z-order 置顶（仅改样式可能不生效）
+            // 确保 Z-order 置顶（仅改样式可能不生效；不带显示标志，维持隐藏）
             let _ = SetWindowPos(
                 hwnd,
                 HWND_TOPMOST,
@@ -156,8 +156,9 @@ fn apply_windows_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
 
-            // 显示但不激活窗口
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            // 窗口显示由前端页面加载完成后调用 show() 触发：
+            // 此处过早 ShowWindow 会在 WebView2 内容（含透明背景 CSS）未就绪时
+            // 暴露默认白底，造成启动白屏闪烁。
         }
     }
 

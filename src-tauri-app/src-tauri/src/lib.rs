@@ -500,6 +500,21 @@ pub fn run() {
             export_config,
             import_config,
         ])
+        // 浮层页面加载完成后显示窗口：
+        // 窗口初始隐藏（tauri.conf.json visible:false）以避免 WebView2 内容未就绪时
+        // 的白屏闪烁；隐藏窗口中 WebView2 会挂起页面定时器，前端 setTimeout(show)
+        // 不可靠，故由 Rust 侧在 PageLoadEvent::Finished 时显示。
+        // 注意：必须对 WebviewWindow（宿主窗口）调用 show——
+        // Webview::show() 仅显示 WebView 控件，不影响窗口可见性。
+        .on_page_load(|webview, payload| {
+            use tauri::webview::PageLoadEvent;
+            if payload.event() == PageLoadEvent::Finished && webview.label() == "overlay" {
+                use tauri::Manager;
+                if let Some(win) = webview.get_webview_window("overlay") {
+                    let _ = win.show();
+                }
+            }
+        })
         .setup(|app| {
             // 初始化配置管理器
             let config_dir = app.path().app_config_dir().unwrap_or_else(|_| {
@@ -537,7 +552,8 @@ pub fn run() {
             // 应用系统级置顶/不抢焦点样式
             apply_overlay_styles(app.handle())?;
 
-            // 按配置应用悬浮窗布局几何（尺寸 + 记忆位置或默认位置）
+            // 按配置应用悬浮窗布局几何（尺寸 + 记忆位置或默认位置）。
+            // 此时窗口仍隐藏（visible:false），调整几何不可见、无闪烁。
             {
                 let layout = app
                     .state::<AppState>()

@@ -83,6 +83,10 @@
     loadButtons();
     loadLayout();
 
+    // 窗口显示由 Rust 侧 on_page_load(Finished) 触发：
+    // 窗口初始隐藏（visible:false）避免白屏闪烁，且隐藏窗口中 WebView2
+    // 会挂起页面定时器，前端 setTimeout(show) 不可靠。
+
     // 阻止 mousedown 默认行为：防止 WebView2 点击夺取键盘焦点（保持原输入框焦点）
     // 拖动区域（data-tauri-drag-region）由系统处理拖拽，跳过不拦截
     const blockFocusSteal = (e: MouseEvent) => {
