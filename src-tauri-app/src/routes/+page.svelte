@@ -37,8 +37,8 @@
   let overlayOpacityPct = $state(100);
   // 悬浮窗是否置顶（配置持久化）
   let alwaysOnTop = $state(true);
-  // 透明度快速切换档位（百分比）：不透明 → 半透明 → 通透
-  const OPACITY_STEPS = [100, 70, 45];
+  // 透明度切换档位（百分比）：85%（微透）↔ 30%（通透）两档互切
+  const OPACITY_STEPS = [85, 30];
 
   async function loadLayout() {
     try {
@@ -258,17 +258,18 @@
   class:layout-horizontal={layout === "horizontal"}
   style="opacity: {overlayOpacityPct / 100}"
 >
-  <!-- 右上角浮动控制按钮条：移动 / 布局切换 / 透明度 / 置顶 / 隐藏 -->
+  <!-- 右上角浮动控制按钮条（左→右）：隐藏 / 布局切换 / 透明度 / 置顶 / 移动 -->
   <div class="ctrl-bar">
     <button
-      class="ctrl-btn ctrl-move"
-      title="按住拖动悬浮窗"
-      aria-label="移动悬浮窗"
-      onmousedown={onMoveDown}
+      class="ctrl-btn ctrl-hide"
+      title="隐藏悬浮窗（托盘或全局热键唤回）"
+      aria-label="隐藏悬浮窗"
+      onclick={hideOverlay}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
-        <path d="M12 3v18M3 12h18" />
-        <path d="M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" />
+        <path d="M3 10s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
+        <circle cx="12" cy="10" r="2.5" />
+        <path d="M4 20L20 4" />
       </svg>
     </button>
     <button
@@ -309,15 +310,14 @@
       </svg>
     </button>
     <button
-      class="ctrl-btn ctrl-hide"
-      title="隐藏悬浮窗（托盘或全局热键唤回）"
-      aria-label="隐藏悬浮窗"
-      onclick={hideOverlay}
+      class="ctrl-btn ctrl-move"
+      title="按住拖动悬浮窗"
+      aria-label="移动悬浮窗"
+      onmousedown={onMoveDown}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
-        <path d="M3 10s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
-        <circle cx="12" cy="10" r="2.5" />
-        <path d="M4 20L20 4" />
+        <path d="M12 3v18M3 12h18" />
+        <path d="M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" />
       </svg>
     </button>
   </div>
