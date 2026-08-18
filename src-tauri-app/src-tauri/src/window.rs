@@ -120,7 +120,34 @@ pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
     let (x, y) = overlay
         .saved_position(layout)
         .unwrap_or_else(|| default_overlay_position(app, layout, w as f64, h as f64));
+    // 记忆位置钳制到主屏工作区内：避免配置残留（拖动测试/历史版本把窗口拖出屏幕）
+    // 导致恢复超屏位置——超屏透明窗口在 Windows 上会引发 DWM 合成异常（拖动卡顿）
+    // 且边框超出屏幕边缘。
+    let (x, y) = clamp_to_work_area(app, x, y);
     let _ = win.set_position(LogicalPosition::new(x, y));
+}
+
+/// 将位置钳制到主屏工作区（逻辑坐标），保证窗口主体在屏内
+fn clamp_to_work_area(app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
+    let scale = get_overlay_window(app)
+        .and_then(|win| win.scale_factor().ok())
+        .unwrap_or(1.0);
+    let (wx, wy, wr, wb) = primary_work_area();
+    let (left, top, right, bottom) = (
+        wx as f64 / scale,
+        wy as f64 / scale,
+        wr as f64 / scale,
+        wb as f64 / scale,
+    );
+    // 水平：窗口左缘至少在工作区内，右缘最多距右边界 40 逻辑像素（窗口比屏宽时保持左对齐）
+    let x_min = left as i32;
+    let x_max = ((right - 40.0) as i32).max(x_min);
+    let cx = x.clamp(x_min, x_max);
+    // 垂直：窗口顶部至少在工作区内，底部最多距底边界 40 逻辑像素
+    let y_min = top as i32;
+    let y_max = ((bottom - 40.0) as i32).max(y_min);
+    let cy = y.clamp(y_min, y_max);
+    (cx, cy)
 }
 
 /// 获取浮层窗口句柄
