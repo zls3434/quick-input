@@ -468,6 +468,9 @@ fn run_focus_listener(app: tauri::AppHandle) {
     }
 }
 
+/// 浮层待显示标志：on_page_load 早于 setup 触发时置位，setup 应用几何后补显示
+static OVERLAY_SHOW_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -500,18 +503,34 @@ pub fn run() {
             export_config,
             import_config,
         ])
-        // 浮层页面加载完成后显示窗口：
+        // 浮层页面加载完成后：先应用样式与几何，再显示窗口。
         // 窗口初始隐藏（tauri.conf.json visible:false）以避免 WebView2 内容未就绪时
         // 的白屏闪烁；隐藏窗口中 WebView2 会挂起页面定时器，前端 setTimeout(show)
         // 不可靠，故由 Rust 侧在 PageLoadEvent::Finished 时显示。
-        // 注意：必须对 WebviewWindow（宿主窗口）调用 show——
-        // Webview::show() 仅显示 WebView 控件，不影响窗口可见性。
+        // 注意：
+        // 1. 必须对 WebviewWindow（宿主窗口）调用 show——Webview::show() 仅显示
+        //    WebView 控件，不影响窗口可见性。
+        // 2. on_page_load 可能在 setup 钩子之前触发（窗口创建期间 WebView2 消息泵
+        //    会同步派发加载完成事件）。此时配置尚未加载、AppState 未管理：
+        //    - 不能访问 state（会 panic），用 try_state 判断
+        //    - 不能立即显示（几何未知会默认位置闪现），标记待显示，
+        //      由 setup 加载配置并应用几何后再显示
         .on_page_load(|webview, payload| {
             use tauri::webview::PageLoadEvent;
             if payload.event() == PageLoadEvent::Finished && webview.label() == "overlay" {
                 use tauri::Manager;
-                if let Some(win) = webview.get_webview_window("overlay") {
-                    let _ = win.show();
+                let app = webview.app_handle();
+                let _ = window::apply_overlay_styles(app);
+                let state_ready = app.try_state::<crate::AppState>().is_some();
+                if state_ready {
+                    let layout = window::current_layout(app);
+                    window::apply_overlay_geometry(app, &layout);
+                    if let Some(win) = webview.get_webview_window("overlay") {
+                        let _ = win.show();
+                    }
+                } else {
+                    // setup 未执行：推迟显示（setup 末尾检查此标志）
+                    OVERLAY_SHOW_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
             }
         })
@@ -555,15 +574,16 @@ pub fn run() {
             // 按配置应用悬浮窗布局几何（尺寸 + 记忆位置或默认位置）。
             // 此时窗口仍隐藏（visible:false），调整几何不可见、无闪烁。
             {
-                let layout = app
-                    .state::<AppState>()
-                    .config_manager
-                    .lock()
-                    .ok()
-                    .and_then(|mgr| mgr.config().overlay.clone())
-                    .map(|ov| ov.effective_layout().to_string())
-                    .unwrap_or_else(|| "vertical".to_string());
+                let layout = window::current_layout(app.handle());
                 window::apply_overlay_geometry(app.handle(), &layout);
+            }
+
+            // 页面加载完成早于 setup 时（WebView2 消息泵同步派发），此时已加载
+            // 配置并应用几何，补上被推迟的窗口显示
+            if OVERLAY_SHOW_PENDING.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some(win) = window::get_overlay_window(app.handle()) {
+                    let _ = win.show();
+                }
             }
 
             // 设置系统托盘图标与菜单

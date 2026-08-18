@@ -64,6 +64,20 @@ pub fn default_overlay_position(app: &AppHandle, layout: &str, w: f64, h: f64) -
     }
 }
 
+/// 读取配置中的生效布局（配置未加载或无 overlay 节时为竖向默认）
+pub fn current_layout(app: &AppHandle) -> String {
+    app.try_state::<crate::AppState>()
+        .and_then(|state| {
+            state
+                .config_manager
+                .lock()
+                .ok()
+                .and_then(|mgr| mgr.config().overlay.clone())
+        })
+        .map(|ov| ov.effective_layout().to_string())
+        .unwrap_or_else(|| "vertical".to_string())
+}
+
 /// 应用悬浮窗几何：按布局设置尺寸（优先记忆尺寸），并定位到记忆位置或默认位置
 ///
 /// 横向布局的高度此处设为单行高度，前端加载后按按钮行数自适应修正。
@@ -74,12 +88,17 @@ pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
         return;
     };
 
-    let state = app.state::<crate::AppState>();
-    let overlay = state
-        .config_manager
-        .lock()
-        .ok()
-        .and_then(|mgr| mgr.config().overlay.clone())
+    // try_state：on_page_load 可能早于 setup 触发（此时配置未加载），
+    // 取不到状态时回退默认值，绝不 panic。
+    let overlay = app
+        .try_state::<crate::AppState>()
+        .and_then(|state| {
+            state
+                .config_manager
+                .lock()
+                .ok()
+                .and_then(|mgr| mgr.config().overlay.clone())
+        })
         .unwrap_or_default();
     let (w, h) = overlay.effective_size(layout);
     let _ = win.set_size(tauri::LogicalSize::new(w as f64, h as f64));
