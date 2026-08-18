@@ -21,7 +21,10 @@
   let error = $state<string | null>(null);
 
   // 编辑表单状态
+  // editMode 独立于 editId：新增时用户输入 ID 后 editId 非空，
+  // 不能再用 editId 是否为空来判断模式（否则一输入就变成"编辑"）
   let editing = $state(false);
+  let editMode = $state<"new" | "edit">("new");
   let editId = $state("");
   let editLabel = $state("");
   let editContent = $state("");
@@ -118,6 +121,7 @@
   }
 
   function startNew() {
+    editMode = "new";
     editId = "";
     editLabel = "";
     editContent = "";
@@ -127,6 +131,7 @@
   }
 
   function startEdit(btn: ButtonConfig) {
+    editMode = "edit";
     editId = btn.id;
     editLabel = btn.label;
     editContent = btn.content;
@@ -263,11 +268,11 @@
 
       {#if editing}
         <div class="edit-form">
-          <h3>{editId === "" ? "新增按钮" : "编辑按钮"}</h3>
+          <h3>{editMode === "new" ? "新增按钮" : "编辑按钮"}</h3>
           {#if saveError}
             <div class="form-error">{saveError}</div>
           {/if}
-          {#if editId === ""}
+          {#if editMode === "new"}
             <label>
               ID <input bind:value={editId} placeholder="唯一标识，如 git-status" />
             </label>
@@ -283,7 +288,7 @@
           </label>
           <div class="form-actions">
             <button class="btn-cancel" onclick={cancelEdit}>取消</button>
-            <button class="btn-primary" onclick={editId === "" ? saveNew : saveEdit}>保存</button>
+            <button class="btn-primary" onclick={editMode === "new" ? saveNew : saveEdit}>保存</button>
           </div>
         </div>
       {/if}
