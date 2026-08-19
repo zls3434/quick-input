@@ -769,8 +769,9 @@
     vertical-align: 1px;
   }
 
-  /* 右键自定义菜单 */
-  .ctx-menu {
+  /* 右键自定义菜单（原生 DOM 动态创建，须用 :global 使其样式生效——
+     Svelte scoped CSS 只作用于模板内静态元素，动态元素匹配不到） */
+  :global(.ctx-menu) {
     position: fixed;
     z-index: 1000;
     min-width: 150px;
@@ -780,7 +781,7 @@
     padding: 4px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   }
-  .ctx-item {
+  :global(.ctx-item) {
     display: block;
     width: 100%;
     padding: 7px 10px;
@@ -792,21 +793,21 @@
     text-align: left;
     cursor: pointer;
   }
-  .ctx-item:hover:not(.disabled) {
+  :global(.ctx-item:hover:not(.disabled)) {
     background: rgba(122, 162, 247, 0.18);
   }
-  .ctx-item.disabled {
+  :global(.ctx-item.disabled) {
     color: #777;
     cursor: default;
   }
-  .ctx-hint {
+  :global(.ctx-hint) {
     padding: 4px 10px 6px;
     font-size: 10px;
     color: #888;
   }
 
-  /* 模板输入弹窗 */
-  .template-dialog {
+  /* 模板输入弹窗（原生 DOM 动态创建，同样须 :global） */
+  :global(.template-dialog) {
     position: fixed;
     inset: 0;
     z-index: 1100;
@@ -815,7 +816,7 @@
     justify-content: center;
     background: rgba(0, 0, 0, 0.35);
   }
-  .dialog-box {
+  :global(.dialog-box) {
     width: 260px;
     background: rgba(40, 40, 44, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.14);
@@ -823,7 +824,7 @@
     padding: 12px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
-  .dialog-title {
+  :global(.dialog-title) {
     font-size: 12px;
     color: #bbb;
     margin-bottom: 8px;
@@ -831,7 +832,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .template-input {
+  :global(.template-input) {
     width: 100%;
     box-sizing: border-box;
     padding: 7px 9px;
@@ -842,26 +843,26 @@
     font-size: 13px;
     outline: none;
   }
-  .template-input:focus {
+  :global(.template-input:focus) {
     border-color: #7aa2f7;
   }
-  .dialog-preview {
+  :global(.dialog-preview) {
     margin-top: 7px;
     font-size: 11px;
     color: #9ece6a;
     word-break: break-all;
   }
-  .dialog-preview.dim {
+  :global(.dialog-preview.dim) {
     color: #888;
   }
-  .dialog-actions {
+  :global(.dialog-actions) {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
     margin-top: 10px;
   }
-  .dialog-actions .btn-secondary,
-  .dialog-actions .btn-primary {
+  :global(.dialog-actions .btn-secondary),
+  :global(.dialog-actions .btn-primary) {
     padding: 5px 14px;
     border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.16);
@@ -870,14 +871,14 @@
     font-size: 12px;
     cursor: pointer;
   }
-  .dialog-actions .btn-secondary:hover {
+  :global(.dialog-actions .btn-secondary:hover) {
     background: rgba(255, 255, 255, 0.1);
   }
-  .dialog-actions .btn-primary {
+  :global(.dialog-actions .btn-primary) {
     border-color: #7aa2f7;
     color: #7aa2f7;
   }
-  .dialog-actions .btn-primary:hover {
+  :global(.dialog-actions .btn-primary:hover) {
     background: rgba(122, 162, 247, 0.2);
   }
 
