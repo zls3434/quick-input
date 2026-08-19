@@ -101,6 +101,13 @@ fn restore_focus() -> Result<(), String> {
     Ok(())
 }
 
+/// 切换悬浮窗"可输入"模式：模板输入弹窗打开时临时移除 NOACTIVATE 并激活
+/// 窗口（获得键盘输入焦点），关闭时恢复 NOACTIVATE 并把前台还给原窗口。
+#[tauri::command]
+fn set_overlay_focusable(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    window::set_overlay_focusable(&app, enabled)
+}
+
 /// 查询开机自启是否启用
 #[tauri::command]
 fn is_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
@@ -635,17 +642,22 @@ fn run_focus_listener(app: tauri::AppHandle) {
                 state
                     .focus_events
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let should_switch = {
-                    let mut current = state.current_process.lock().unwrap();
-                    if current.eq_ignore_ascii_case(&process) {
-                        false // 同一进程不重复发射
-                    } else {
-                        *current = process;
-                        true
+                // 悬浮窗自身激活（模板输入弹窗期间）不触发画像切换：
+                // 保持当前按钮组不变，避免弹窗期间按钮闪动
+                let is_self = process.eq_ignore_ascii_case("quickinput.exe");
+                if !is_self {
+                    let should_switch = {
+                        let mut current = state.current_process.lock().unwrap();
+                        if current.eq_ignore_ascii_case(&process) {
+                            false // 同一进程不重复发射
+                        } else {
+                            *current = process;
+                            true
+                        }
+                    };
+                    if should_switch {
+                        let _ = app.emit("ConfigSwitched", ());
                     }
-                };
-                if should_switch {
-                    let _ = app.emit("ConfigSwitched", ());
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -671,6 +683,7 @@ pub fn run() {
             inject_text,
             inject_enter,
             restore_focus,
+            set_overlay_focusable,
             reload_config,
             is_autostart_enabled,
             toggle_autostart,

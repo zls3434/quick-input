@@ -285,21 +285,31 @@
       }
     };
     input.addEventListener("input", updatePreview);
-    const close = () => overlay.remove();
-    const confirm = () => {
+    // 关闭弹窗：恢复"点击不抢焦点"（NOACTIVATE），并把前台还给原输入窗口
+    const close = () => {
+      overlay.remove();
+      void invoke("set_overlay_focusable", { enabled: false }).catch(() => {});
+    };
+    const confirm = async () => {
       const text = mergeTemplate(btn.content, input.value);
       close();
+      // 先恢复原窗口前台，再注入（粘贴目标为原输入框）
+      await invoke("set_overlay_focusable", { enabled: false }).catch(() => {});
       void injectText(text, btn.label);
     };
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") confirm();
+      if (e.key === "Enter") void confirm();
       if (e.key === "Escape") close();
     });
     overlay.querySelector<HTMLButtonElement>('[data-act="cancel"]')!.addEventListener("click", close);
-    overlay.querySelector<HTMLButtonElement>('[data-act="ok"]')!.addEventListener("click", confirm);
+    overlay.querySelector<HTMLButtonElement>('[data-act="ok"]')!.addEventListener("click", () => void confirm());
     overlay.addEventListener("mousedown", (e) => e.stopPropagation());
     document.body.appendChild(overlay);
-    setTimeout(() => input.focus(), 0);
+    // 临时切换为可输入：移除 NOACTIVATE 并激活窗口，使键盘焦点进入输入框
+    void invoke("set_overlay_focusable", { enabled: true }).then(() => {
+      input.focus();
+      input.select();
+    });
   }
 
   // 弹出右键自定义菜单（原生 DOM）

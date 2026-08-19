@@ -5,6 +5,133 @@
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+/// 模板输入弹窗打开前的系统前台窗口（关闭弹窗时恢复）
+#[cfg(target_os = "windows")]
+static DIALOG_PREV_FOREGROUND: std::sync::Mutex<Option<isize>> = std::sync::Mutex::new(None);
+
+/// 切换悬浮窗"可输入"模式（模板输入弹窗期间临时启用，其余时间禁用）
+///
+/// - enabled=true：记录当前系统前台窗口 → 递归移除窗口树 WS_EX_NOACTIVATE
+///   → 激活悬浮窗（SetForegroundWindow + AttachThreadInput 绕过前台锁），
+///   使模板输入框获得真实键盘输入焦点。
+/// - enabled=false：递归恢复 WS_EX_NOACTIVATE（点击不抢焦点）；若当前前台
+///   仍是悬浮窗，则把前台还给弹窗打开前记录的窗口。
+#[cfg(target_os = "windows")]
+pub fn set_overlay_focusable(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    let window = get_overlay_window(app).ok_or_else(|| "浮层窗口 (overlay) 未找到".to_string())?;
+    let handle = window.window_handle().map_err(|e| e.to_string())?;
+    let raw = handle.as_raw();
+
+    let hwnd = match raw {
+        RawWindowHandle::Win32(win32) => HWND(win32.hwnd.get() as *mut std::ffi::c_void),
+        _ => return Ok(()), // 非 Windows 平台忽略
+    };
+
+    // 递归为窗口树设置/移除 WS_EX_NOACTIVATE
+    unsafe extern "system" fn collect_child(h: HWND, l: LPARAM) -> BOOL {
+        let v = unsafe { &mut *(l.0 as *mut Vec<HWND>) };
+        v.push(h);
+        BOOL(1)
+    }
+    fn apply_recursive(h: HWND, no_activate: bool) {
+        unsafe {
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+            let new_ex = if no_activate {
+                ex | (WS_EX_NOACTIVATE.0 as isize)
+            } else {
+                ex & !(WS_EX_NOACTIVATE.0 as isize)
+            };
+            SetWindowLongPtrW(h, GWL_EXSTYLE, new_ex);
+            let mut children: Vec<HWND> = Vec::new();
+            EnumChildWindows(
+                h,
+                Some(collect_child),
+                LPARAM(&mut children as *mut Vec<HWND> as isize),
+            );
+            for ch in children {
+                apply_recursive(ch, no_activate);
+            }
+        }
+    }
+
+    // AttachThreadInput + SetForegroundWindow：非前台线程激活窗口的标准技巧
+    fn activate(hwnd: HWND) {
+        unsafe {
+            let fg = GetForegroundWindow();
+            let fg_tid = GetWindowThreadProcessId(fg, None);
+            let my_tid = GetCurrentThreadId();
+            let attached = fg_tid != 0 && fg_tid != my_tid;
+            if attached {
+                let _ = AttachThreadInput(my_tid, fg_tid, true);
+            }
+            let _ = SetForegroundWindow(hwnd);
+            if attached {
+                let _ = AttachThreadInput(my_tid, fg_tid, false);
+            }
+        }
+    }
+
+    if enabled {
+        // 记录弹窗打开前的系统前台窗口（供关闭后还原）
+        let fg = unsafe { GetForegroundWindow() };
+        if !fg.0.is_null() && fg != hwnd {
+            if let Ok(mut slot) = DIALOG_PREV_FOREGROUND.lock() {
+                *slot = Some(fg.0 as isize);
+            }
+        }
+        apply_recursive(hwnd, false);
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
+            );
+        }
+        activate(hwnd);
+    } else {
+        apply_recursive(hwnd, true);
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
+            );
+        }
+        // 仅当用户未自行切走时，把前台还给弹窗打开前的窗口
+        let fg = unsafe { GetForegroundWindow() };
+        if fg == hwnd {
+            let prev = DIALOG_PREV_FOREGROUND
+                .lock()
+                .ok()
+                .and_then(|mut s| s.take());
+            if let Some(v) = prev {
+                activate(HWND(v as *mut std::ffi::c_void));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 非 Windows 平台占位实现
+#[cfg(not(target_os = "windows"))]
+pub fn set_overlay_focusable(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
 /// 浮层窗口的 label（与 tauri.conf.json 中的 label 一致）
 pub const OVERLAY_WINDOW_LABEL: &str = "overlay";
 
