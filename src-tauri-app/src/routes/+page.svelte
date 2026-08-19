@@ -161,6 +161,9 @@
       holdTimer = null;
     }
     pressedId = null;
+    // 兜底恢复焦点：mousedown 注入后 WebView2 完成鼠标处理时可能激活悬浮窗，
+    // mouseup 时将前台还给注入前的目标窗口
+    void invoke("restore_focus").catch(() => {});
     if (injectPromise) {
       const p = injectPromise;
       injectPromise = null;
@@ -177,6 +180,7 @@
       holdTimer = null;
     }
     pressedId = null;
+    void invoke("restore_focus").catch(() => {});
     if (injectPromise) {
       const p = injectPromise;
       injectPromise = null;

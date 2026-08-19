@@ -15,6 +15,45 @@ use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFOR
 use crate::inject::{InjectError, Injector};
 use crate::focus_guard::FocusGuard;
 
+/// 最近一次注入时的目标前台窗口（供点击结束后恢复焦点兜底）
+///
+/// mousedown 注入后，WebView2 子窗口完成鼠标处理时仍可能激活悬浮窗
+/// （激活发生在注入恢复之后）。mouseUp 时由前端调用 restore_focus 命令，
+/// 依据此记录把前台还给目标窗口。
+#[cfg(target_os = "windows")]
+static LAST_TARGET_FOREGROUND: std::sync::Mutex<Option<isize>> = std::sync::Mutex::new(None);
+
+/// 记录注入目标前台窗口（HWND 原始值）
+#[cfg(target_os = "windows")]
+pub fn remember_target_foreground(raw: isize) {
+    if let Ok(mut slot) = LAST_TARGET_FOREGROUND.lock() {
+        *slot = Some(raw);
+    }
+}
+
+/// 恢复最近记录的目标前台窗口（点击结束后兜底调用）
+#[cfg(target_os = "windows")]
+pub fn restore_target_foreground() {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+
+    let raw = match LAST_TARGET_FOREGROUND.lock() {
+        Ok(mut slot) => slot.take(),
+        Err(_) => None,
+    };
+    if let Some(v) = raw {
+        unsafe {
+            let _ = SetForegroundWindow(HWND(v as *mut std::ffi::c_void));
+        }
+    }
+}
+
+/// 非 Windows 平台占位
+#[cfg(not(target_os = "windows"))]
+pub fn remember_target_foreground(_raw: isize) {}
+#[cfg(not(target_os = "windows"))]
+pub fn restore_target_foreground() {}
+
 /// Windows 注入器
 pub struct WindowsInjector;
 
@@ -34,6 +73,11 @@ impl Injector for WindowsInjector {
     fn inject_text(&self, text: &str) -> Result<(), InjectError> {
         // 1. 记录焦点（RAII 保护，注入后自动恢复）
         let _guard = FocusGuard::new();
+        // 同时记录目标前台，供 mouseup 后 restore_focus 兜底恢复
+        remember_target_foreground(unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            GetForegroundWindow().0 as isize
+        });
 
         // 2. 处理修饰键冲突（记录当前 Ctrl/Alt/Shift 状态）
         let modifiers = ModifierState::capture();
@@ -53,6 +97,11 @@ impl Injector for WindowsInjector {
     fn inject_enter(&self) -> Result<(), InjectError> {
         // 回车与文本注入同样需要焦点保护与修饰键处理
         let _guard = FocusGuard::new();
+        // 长按场景：刷新目标前台记录，mouseUp 后 restore_focus 仍指向正确窗口
+        remember_target_foreground(unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            GetForegroundWindow().0 as isize
+        });
         let modifiers = ModifierState::capture();
         modifiers.release();
 

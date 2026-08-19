@@ -155,6 +155,18 @@ pub fn get_overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(OVERLAY_WINDOW_LABEL)
 }
 
+/// 显示悬浮窗并重申不抢焦点样式
+///
+/// show() 可能让 tao/WebView2 重新应用窗口样式（实测顶层 WS_EX_NOACTIVATE
+/// 会被覆盖丢失），导致后续点击悬浮窗激活窗口、目标输入框失焦。
+/// 所有显示悬浮窗的路径统一走此函数：显示后立即重申样式。
+pub fn show_overlay_with_styles(app: &AppHandle) {
+    if let Some(win) = get_overlay_window(app) {
+        let _ = win.show();
+    }
+    let _ = apply_overlay_styles(app);
+}
+
 /// 重置悬浮窗位置与大小：清除两布局的记忆几何，恢复默认几何
 ///
 /// 托盘菜单"重置悬浮窗位置和大小"入口。清除记忆后立即应用默认
@@ -208,6 +220,34 @@ pub fn apply_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+/// 递归为窗口及全部子窗口添加 WS_EX_NOACTIVATE（阻止 WebView2 子窗口点击激活）
+#[cfg(target_os = "windows")]
+fn set_no_activate_recursive(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    // EnumChildWindows 只枚举直接子窗口，递归下钻覆盖整棵 HWND 树
+    unsafe extern "system" fn collect_child(h: HWND, l: LPARAM) -> BOOL {
+        let v = unsafe { &mut *(l.0 as *mut Vec<HWND>) };
+        v.push(h);
+        BOOL(1)
+    }
+
+    let mut children: Vec<HWND> = Vec::new();
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | (WS_EX_NOACTIVATE.0 as isize));
+        EnumChildWindows(
+            hwnd,
+            Some(collect_child),
+            LPARAM(&mut children as *mut Vec<HWND> as isize),
+        );
+    }
+    for child in children {
+        set_no_activate_recursive(child);
+    }
 }
 
 /// Windows 平台：通过 HWND 设置置顶/不抢焦点扩展样式
@@ -268,6 +308,13 @@ fn apply_windows_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
                 zorder = HWND_NOTOPMOST;
             }
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
+
+            // WebView2 子窗口链也加 WS_EX_NOACTIVATE：
+            // 真实鼠标点击命中的是 WebView2 的子 HWND（Chrome_WidgetWin_* /
+            // RenderWidgetHost），子窗口未设置 NOACTIVATE 时，其 mousedown
+            // 默认处理会触发 WM_MOUSEACTIVATE → 激活顶层悬浮窗 → 目标窗口
+            // 失去焦点。递归为全部子窗口补上该样式，从源头阻止激活。
+            set_no_activate_recursive(hwnd);
 
             // 确保 Z-order 生效（仅改样式可能不生效；不带显示标志，维持隐藏）
             let _ = SetWindowPos(

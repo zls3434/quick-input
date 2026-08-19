@@ -69,6 +69,13 @@ fn inject_enter() -> Result<(), String> {
     injector.inject_enter().map_err(|e| e.to_string())
 }
 
+/// 恢复点击悬浮窗前的目标前台窗口（mouseup 后兜底，防焦点丢失）
+#[tauri::command]
+fn restore_focus() -> Result<(), String> {
+    crate::inject_windows::restore_target_foreground();
+    Ok(())
+}
+
 /// 查询开机自启是否启用
 #[tauri::command]
 fn is_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
@@ -645,6 +652,7 @@ pub fn run() {
             get_buttons,
             inject_text,
             inject_enter,
+            restore_focus,
             reload_config,
             is_autostart_enabled,
             toggle_autostart,
@@ -694,9 +702,8 @@ pub fn run() {
                 if state_ready {
                     let layout = window::current_layout(app);
                     window::apply_overlay_geometry(app, &layout);
-                    if let Some(win) = webview.get_webview_window("overlay") {
-                        let _ = win.show();
-                    }
+                    // 显示后立即重申样式（show 可能重置顶层 NOACTIVATE）
+                    window::show_overlay_with_styles(app);
                 } else {
                     // setup 未执行：推迟显示（setup 末尾检查此标志）
                     OVERLAY_SHOW_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -748,11 +755,9 @@ pub fn run() {
             }
 
             // 页面加载完成早于 setup 时（WebView2 消息泵同步派发），此时已加载
-            // 配置并应用几何，补上被推迟的窗口显示
+            // 配置并应用几何，补上被推迟的窗口显示（含样式重申）
             if OVERLAY_SHOW_PENDING.load(std::sync::atomic::Ordering::SeqCst) {
-                if let Some(win) = window::get_overlay_window(app.handle()) {
-                    let _ = win.show();
-                }
+                window::show_overlay_with_styles(app.handle());
             }
 
             // 设置系统托盘图标与菜单

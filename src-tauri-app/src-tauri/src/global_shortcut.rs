@@ -201,7 +201,7 @@ fn toggle_overlay(app: &AppHandle) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            let _ = window.show();
+            crate::window::show_overlay_with_styles(app);
         }
     }
 }

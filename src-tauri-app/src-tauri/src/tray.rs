@@ -89,13 +89,13 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 /// 切换浮层窗口可见性
 ///
-/// 若窗口当前可见则隐藏，否则显示（不抢焦点）。
+/// 若窗口当前可见则隐藏，否则显示（不抢焦点，显示后重申样式）。
 fn toggle_overlay(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            let _ = window.show();
+            crate::window::show_overlay_with_styles(app);
         }
     }
 }
