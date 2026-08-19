@@ -132,15 +132,16 @@
   let pressedId: string | null = null;
   let injectPromise: Promise<void> | null = null;
 
-  async function onBtnDown(btn: ButtonConfig) {
-    if (injectingId !== null) return; // 注入进行中禁止并发
+  async function onBtnDown(e: MouseEvent, btn: ButtonConfig) {
+    if (e.button !== 0) return; // 仅左键注入（右键留给自定义菜单）
+       if (injectingId !== null) return; // 注入进行中禁止并发
     injectingId = btn.id;
     pressedId = btn.id;
     lastError = null;
     // 1. 按下立即注入文本；注入完成前锁定 injectingId（防止并发注入）
-    injectPromise = invoke("inject_text", { text: btn.content }).catch((e) => {
-      console.error(`注入失败 [${btn.label}]: ${e}`);
-      lastError = `注入失败: ${e}`;
+    injectPromise = invoke("inject_text", { text: btn.content }).catch((err: unknown) => {
+      console.error(`注入失败 [${btn.label}]: ${err}`);
+      lastError = `注入失败: ${err}`;
     });
     // 2. 启动长按定时器：超过 2 秒触发回车（等文本注入完成，避免截断）
     holdTimer = setTimeout(async () => {
@@ -148,8 +149,8 @@
       await injectPromise;
       try {
         await invoke("inject_enter");
-      } catch (e) {
-        console.error(`回车注入失败: ${e}`);
+      } catch (err) {
+        console.error(`回车注入失败: ${err}`);
       }
     }, HOLD_MS);
   }
@@ -193,6 +194,117 @@
     }
   }
 
+  // ---- 按钮右键：自定义菜单 + 模板输入（原生 DOM 实现）----
+  // 模板按钮：content 含空引号 ""（如 git commit -m ""），引号内为模板插入位。
+  // 右键菜单选择"模板输入"→ 弹窗填写内容（如 first init）→ 确认后合并注入
+  // （git commit -m "first init"）。非模板按钮菜单项禁用，仅左键快捷输入。
+  // 用原生 DOM 而非 Svelte 响应式：contextmenu 事件来自 window capture 委托，
+  // 逃逸闭包中的状态更新在 legacy 模式下不保证触发重渲染。
+  function isTemplateBtn(btn: ButtonConfig): boolean {
+    return btn.content.includes('""');
+  }
+
+  function removeCtxMenu() {
+    document.querySelector(".ctx-menu")?.remove();
+  }
+
+  function removeTemplateDialog() {
+    document.querySelector(".template-dialog")?.remove();
+  }
+
+  // 合并模板：引号内填入内容
+  function mergeTemplate(content: string, value: string): string {
+    return content.replace('""', `"${value}"`);
+  }
+
+  // 模板注入（确认后调用）
+  async function injectText(text: string, label: string) {
+    lastError = null;
+    try {
+      await invoke("inject_text", { text });
+    } catch (err) {
+      console.error(`注入失败 [${label}]: ${err}`);
+      lastError = `注入失败: ${err}`;
+    }
+  }
+
+  // 弹出模板输入对话框（原生 DOM）
+  function showTemplateDialog(btn: ButtonConfig) {
+    removeCtxMenu();
+    removeTemplateDialog();
+    const overlay = document.createElement("div");
+    overlay.className = "template-dialog";
+    overlay.innerHTML = `
+      <div class="dialog-box">
+        <div class="dialog-title"></div>
+        <input class="template-input" type="text" placeholder="输入模板内容…" />
+        <div class="dialog-preview dim">内容将填入引号内</div>
+        <div class="dialog-actions">
+          <button class="btn-secondary" data-act="cancel">取消</button>
+          <button class="btn-primary" data-act="ok">输入</button>
+        </div>
+      </div>`;
+    const title = overlay.querySelector<HTMLElement>(".dialog-title")!;
+    title.textContent = `模板输入 — ${btn.label}`;
+    const input = overlay.querySelector<HTMLInputElement>(".template-input")!;
+    const preview = overlay.querySelector<HTMLElement>(".dialog-preview")!;
+    const updatePreview = () => {
+      if (input.value) {
+        preview.textContent = `将输入：${mergeTemplate(btn.content, input.value)}`;
+        preview.classList.remove("dim");
+      } else {
+        preview.textContent = "内容将填入引号内";
+        preview.classList.add("dim");
+      }
+    };
+    input.addEventListener("input", updatePreview);
+    const close = () => overlay.remove();
+    const confirm = () => {
+      const text = mergeTemplate(btn.content, input.value);
+      close();
+      void injectText(text, btn.label);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") confirm();
+      if (e.key === "Escape") close();
+    });
+    overlay.querySelector<HTMLButtonElement>('[data-act="cancel"]')!.addEventListener("click", close);
+    overlay.querySelector<HTMLButtonElement>('[data-act="ok"]')!.addEventListener("click", confirm);
+    overlay.addEventListener("mousedown", (e) => e.stopPropagation());
+    document.body.appendChild(overlay);
+    setTimeout(() => input.focus(), 0);
+  }
+
+  // 弹出右键自定义菜单（原生 DOM）
+  function showCtxMenu(e: MouseEvent, btn: ButtonConfig) {
+    removeCtxMenu();
+    removeTemplateDialog();
+    const menu = document.createElement("div");
+    menu.className = "ctx-menu";
+    const item = document.createElement("button");
+    item.className = "ctx-item";
+    const isTpl = isTemplateBtn(btn);
+    item.textContent = isTpl ? "模板输入…" : "模板输入…（不可用）";
+    item.disabled = !isTpl;
+    item.addEventListener("click", () => {
+      if (isTpl) showTemplateDialog(btn);
+    });
+    menu.appendChild(item);
+    if (!isTpl) {
+      const hint = document.createElement("div");
+      hint.className = "ctx-hint";
+      hint.textContent = '该按钮内容不含 "" 模板位';
+      menu.appendChild(hint);
+    }
+    // 定位：右键坐标（视口内），防溢出
+    const x = Math.min(e.clientX, window.innerWidth - 160);
+    const y = Math.min(e.clientY, window.innerHeight - 60);
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    document.body.appendChild(menu);
+  }
+
   onMount(() => {
     loadButtons();
     loadLayout();
@@ -204,10 +316,42 @@
     // 阻止 mousedown 默认行为：防止 WebView2 点击夺取键盘焦点（保持原输入框焦点）。
     // 控制按钮（.ctrl-btn）与功能按钮的 click 不受 preventDefault 影响，
     // 移动按钮的 startDragging 亦是显式 API 调用。
+    // 例外：弹窗（模板输入）内的控件需要正常聚焦打字。
     const blockFocusSteal = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.(".ctx-menu, .template-dialog")) return;
       e.preventDefault();
     };
     window.addEventListener("mousedown", blockFocusSteal, true);
+
+    // 屏蔽系统右键菜单；按钮右键（委托）弹自定义菜单（原生 DOM）。
+    // 用 window capture 统一处理：实测 WebView2 中 contextmenu 事件 target
+    // 是按钮内 tooltip-wrap 等子元素且不冒泡到按钮绑定，元素级绑定不可靠；
+    // capture 必达，closest('.button-item') 反查按钮。
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const el = (e.target as HTMLElement | null)?.closest?.(".button-item");
+      if (el) {
+        const btn = buttons.find((b) => b.id === el.dataset.id);
+        if (btn) {
+          showCtxMenu(e, btn);
+          return;
+        }
+      }
+      // 非按钮区域右键：关闭菜单与弹窗
+      removeCtxMenu();
+      removeTemplateDialog();
+    };
+    window.addEventListener("contextmenu", handleContextMenu, true);
+
+    // 点击任意处关闭右键菜单（点击菜单内部除外——其 mousedown 已 stopPropagation）
+    const closeMenuOnClick = (e: MouseEvent) => {
+      const inMenu = (e.target as HTMLElement | null)?.closest?.(".ctx-menu, .template-dialog");
+      if (!inMenu) {
+        removeCtxMenu();
+      }
+    };
+    window.addEventListener("click", closeMenuOnClick);
 
     // 监听配置切换事件，收到后自动刷新按钮列表与布局
     const unlisten = listen("ConfigSwitched", () => {
@@ -297,6 +441,10 @@
     return () => {
       if (holdTimer) clearTimeout(holdTimer);
       window.removeEventListener("mousedown", blockFocusSteal, true);
+      window.removeEventListener("contextmenu", handleContextMenu, true);
+      window.removeEventListener("click", closeMenuOnClick);
+      removeCtxMenu();
+      removeTemplateDialog();
       unlisten.then((fn) => fn());
       unlistenMoved.then((fn) => fn());
       unlistenResized.then((fn) => fn());
@@ -413,9 +561,10 @@
         <button
           class="button-item"
           class:is-clicking={injectingId === btn.id}
+          class:is-template={isTemplateBtn(btn)}
           data-id={btn.id}
           disabled={injectingId !== null && injectingId !== btn.id}
-          onmousedown={() => onBtnDown(btn)}
+          onmousedown={(e) => onBtnDown(e, btn)}
           onmouseup={onBtnUp}
           onmouseleave={onBtnLeave}
         >
@@ -428,7 +577,9 @@
         </button>
       {/each}
     </div>
-  {/if}
+
+    <!-- 右键自定义菜单与模板弹窗由原生 JS 动态创建（见 showCtxMenu/showTemplateDialog） -->
+    {/if}
 
   <!-- 缩放手柄视觉指示器（右下角） -->
   <div class="resize-handle" aria-hidden="true">
@@ -552,6 +703,130 @@
   }
   .layout-horizontal .error-banner {
     width: 100%;
+  }
+
+  /* 模板按钮标识：右侧小标记 */
+  .button-item.is-template .button-label::after {
+    content: "T";
+    margin-left: 5px;
+    font-size: 9px;
+    color: #7aa2f7;
+    border: 1px solid #7aa2f7;
+    border-radius: 3px;
+    padding: 0 3px;
+    vertical-align: 1px;
+  }
+
+  /* 右键自定义菜单 */
+  .ctx-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 150px;
+    background: rgba(40, 40, 44, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  }
+  .ctx-item {
+    display: block;
+    width: 100%;
+    padding: 7px 10px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: #e0e0e0;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ctx-item:hover:not(.disabled) {
+    background: rgba(122, 162, 247, 0.18);
+  }
+  .ctx-item.disabled {
+    color: #777;
+    cursor: default;
+  }
+  .ctx-hint {
+    padding: 4px 10px 6px;
+    font-size: 10px;
+    color: #888;
+  }
+
+  /* 模板输入弹窗 */
+  .template-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .dialog-box {
+    width: 260px;
+    background: rgba(40, 40, 44, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  .dialog-title {
+    font-size: 12px;
+    color: #bbb;
+    margin-bottom: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .template-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    outline: none;
+  }
+  .template-input:focus {
+    border-color: #7aa2f7;
+  }
+  .dialog-preview {
+    margin-top: 7px;
+    font-size: 11px;
+    color: #9ece6a;
+    word-break: break-all;
+  }
+  .dialog-preview.dim {
+    color: #888;
+  }
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .dialog-actions .btn-secondary,
+  .dialog-actions .btn-primary {
+    padding: 5px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: none;
+    color: #ccc;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .dialog-actions .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .dialog-actions .btn-primary {
+    border-color: #7aa2f7;
+    color: #7aa2f7;
+  }
+  .dialog-actions .btn-primary:hover {
+    background: rgba(122, 162, 247, 0.2);
   }
 
   .button-list::-webkit-scrollbar {
