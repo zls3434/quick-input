@@ -362,7 +362,11 @@
     // capture 必达，closest('.button-item') 反查按钮。
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
-      const el = (e.target as HTMLElement | null)?.closest?.(".button-item");
+      const t = e.target as HTMLElement | null;
+      // 菜单/弹窗内右键：保持现状（部分输入设备松开右键时 contextmenu
+      // 的 target 为松开位置元素即菜单本身，若在此关闭会误关刚弹出的菜单）
+      if (t?.closest?.(".ctx-menu, .template-dialog")) return;
+      const el = t?.closest?.(".button-item");
       if (el) {
         const btn = buttons.find((b) => b.id === el.dataset.id);
         if (btn) {
@@ -375,6 +379,21 @@
       removeTemplateDialog();
     };
     window.addEventListener("contextmenu", handleContextMenu, true);
+
+    // 右键按下即弹菜单（capture 兜底）：不依赖按钮上的 onmousedown 绑定
+    // 与事件冒泡（覆盖 Svelte 委托/绑定失效等场景）；按钮绑定分支的去重
+    // 保证只弹一次。菜单/弹窗内右键不重复弹。
+    const handleRightDown = (e: MouseEvent) => {
+      if (e.button !== 2) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".ctx-menu, .template-dialog")) return;
+      const el = t?.closest?.(".button-item");
+      if (el) {
+        const btn = buttons.find((b) => b.id === el.dataset.id);
+        if (btn) showCtxMenu(e, btn);
+      }
+    };
+    window.addEventListener("mousedown", handleRightDown, true);
 
     // 点击任意处关闭右键菜单（点击菜单内部除外——其 mousedown 已 stopPropagation）
     const closeMenuOnClick = (e: MouseEvent) => {
@@ -474,6 +493,7 @@
       if (holdTimer) clearTimeout(holdTimer);
       window.removeEventListener("mousedown", blockFocusSteal, true);
       window.removeEventListener("contextmenu", handleContextMenu, true);
+      window.removeEventListener("mousedown", handleRightDown, true);
       window.removeEventListener("click", closeMenuOnClick);
       removeCtxMenu();
       removeTemplateDialog();
