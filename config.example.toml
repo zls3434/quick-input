@@ -1,0 +1,114 @@
+# QuickInput 配置示例
+#
+# 实际配置文件位置：%APPDATA%\com.quickinput.desktop\default.toml
+# 首次启动自动生成；可参照本文件手动编辑，保存后悬浮窗自动刷新。
+#
+# ─── 按钮结构 ───────────────────────────────────────────────
+# [[buttons]]          全局按钮（未匹配任何应用画像时显示）
+#   id      = 唯一标识（全局与画像之间也不可重复）
+#   label   = 按钮显示文字
+#   content = 注入的文本内容，支持 {input} 占位符（见下）
+#   comment = 悬浮提示说明（可省略）
+#
+# ─── {input} 模板占位符 ────────────────────────────────────
+# content 中包含 {input} 即为模板按钮（位置任意，不依赖引号）：
+#   左键：占位符不输出，其余内容原样注入，光标自动停在占位符位置
+#         例：git commit -m "{input}" 左键输出 git commit -m ""（光标在引号中间）
+#   右键：弹出「模板输入」对话框，填写内容后合并注入完整命令
+#         例：填 first init → 注入 git commit -m "first init"
+#   长按（>2 秒）：输入后自动回车（同普通按钮）
+# 不含 {input} 的按钮为普通按钮：仅左键快捷输入（右键菜单项禁用）。
+#
+# ─── 交互速查 ──────────────────────────────────────────────
+#   左键        输入内容（模板按钮光标停在占位符处）
+#   长按 >2s    输入内容 + 回车（执行命令）
+#   右键        模板按钮：弹出模板输入对话框
+# ───────────────────────────────────────────────────────────
+
+# ===== 全局按钮（默认组：未匹配任何应用时显示）=====
+[[buttons]]
+id = "reply-ok"
+label = "好的"
+content = "好的"
+comment = "简洁确认回复"
+
+[[buttons]]
+id = "reply-done"
+label = "已完成"
+content = "已经处理好了，你可以看看"
+comment = "告知任务完成"
+
+[[buttons]]
+id = "reply-tpl"
+label = "转达给"
+content = "这个问题我转达给{input}处理"
+comment = "模板示例：{input} 填人名（左键光标停在此处，右键模板输入）"
+
+# ===== 应用画像：按前台进程名匹配按钮组 =====
+# process_name 不区分大小写，匹配进程可执行文件名
+
+[[profiles]]
+process_name = "WindowsTerminal.exe"
+name = "终端"
+
+[[profiles.buttons]]
+id = "git-status"
+label = "Git Status"
+content = "git status"
+comment = "查看工作区状态"
+
+[[profiles.buttons]]
+id = "git-commit"
+label = "Git Commit"
+content = "git commit -m \"{input}\""
+comment = "提交（{input} 为模板位：左键光标停在此处，右键模板输入）"
+
+[[profiles.buttons]]
+id = "git-checkout"
+label = "Git Checkout"
+content = "git checkout -b {input}"
+comment = "新建并切换分支（{input} 填分支名）"
+
+[[profiles.buttons]]
+id = "linux-tail"
+label = "tail -f"
+content = "tail -f {input}"
+comment = "实时查看日志（{input} 填文件路径）"
+
+[[profiles.buttons]]
+id = "linux-curl"
+label = "curl -s"
+content = "curl -s {input}"
+comment = "发起请求（{input} 填 URL）"
+
+[[profiles.buttons]]
+id = "linux-kill"
+label = "kill -9"
+content = "kill -9 {input}"
+comment = "强制结束进程（{input} 填 PID）"
+
+[[profiles]]
+process_name = "Code.exe"
+name = "VS Code"
+
+[[profiles.buttons]]
+id = "fmt"
+label = "Format"
+content = "cargo fmt"
+comment = "格式化 Rust 代码"
+
+[[profiles.buttons]]
+id = "build"
+label = "Build"
+content = "cargo build"
+comment = "编译项目"
+
+# ===== 悬浮窗外观（可省略，使用默认值）=====
+[overlay]
+layout = "vertical"      # vertical 竖向 | horizontal 横向
+vertical_x = 1587        # 窗口位置（屏幕坐标）
+vertical_y = 159
+vertical_w = 300         # 窗口尺寸
+vertical_h = 400
+opacity = 85             # 不透明度 30-100（百分比）
+always_on_top = true     # 窗口置顶

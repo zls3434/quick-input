@@ -17,6 +17,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// 全局通道发送端（供 WinEvent 回调使用）
 static FOREGROUND_SENDER: Mutex<Option<mpsc::Sender<isize>>> = Mutex::new(None);
 
+/// 诊断探针：钩子注册状态（0=线程未跑 1=注册失败 2=注册成功）
+pub static HOOK_STATUS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// 诊断探针：消息循环已处理的消息数（0=循环未运行或无消息）
+pub static LOOP_TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 诊断探针：回调已触发次数
+pub static CALLBACK_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// 前台切换回调函数（WINEVENTPROC 签名）
 ///
 /// 当前台窗口切换时，将新窗口 HWND 通过全局通道发送。
@@ -31,6 +38,7 @@ unsafe extern "system" fn foreground_change_callback(
 ) {
     if let Ok(sender_guard) = FOREGROUND_SENDER.lock() {
         if let Some(ref sender) = *sender_guard {
+            CALLBACK_HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let _ = sender.send(hwnd.0 as isize);
         }
     }
@@ -68,6 +76,10 @@ impl FocusWatcher {
 
             // 注册 WinEvent 钩子
             let hook = register_hook();
+            HOOK_STATUS.store(
+                if hook.0.is_null() { 1 } else { 2 },
+                std::sync::atomic::Ordering::SeqCst,
+            );
 
             let _ = ready_tx.send(thread_id);
 
@@ -75,6 +87,7 @@ impl FocusWatcher {
             let mut msg = MSG::default();
             loop {
                 let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+                LOOP_TICKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if ret.0 == 0 {
                     // 收到 WM_QUIT，退出循环
                     break;
@@ -189,4 +202,9 @@ mod tests {
             watcher.stop();
         }
     }
+
+    // 注：曾有 test_focus_watcher_receives_real_event 真实事件测试——依赖
+    // 真实窗口环境（打开 notepad 触发前台切换），不稳定且已无必要：
+    // 应用已改用 500ms 轮询检测前台进程（见 lib.rs run_focus_listener），
+    // WinEvent 通道不再被应用消费，故移除。
 }

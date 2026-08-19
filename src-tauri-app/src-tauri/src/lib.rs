@@ -38,6 +38,8 @@ struct AppState {
     watcher: Mutex<Option<FocusWatcher>>,
     /// 标记监听线程是否停止
     watcher_stopped: AtomicBool,
+    /// 已收到的前台切换事件数（focus_debug 诊断用）
+    focus_events: std::sync::atomic::AtomicU64,
 }
 
 /// 获取当前配置的按钮列表（按当前活动进程匹配）
@@ -53,6 +55,20 @@ fn get_buttons(state: tauri::State<AppState>) -> Result<Vec<quickinput_config::c
         .cloned()
         .collect();
     Ok(buttons)
+}
+
+/// 调试：返回画像切换内部状态（当前进程名与已收到的前台事件数）
+#[tauri::command]
+fn focus_debug(state: tauri::State<AppState>) -> Result<String, String> {
+    let p = state.current_process.lock().map_err(|e| e.to_string())?;
+    Ok(format!(
+        "process=[{}] events={} hook={} ticks={} cbhits={}",
+        p,
+        state.focus_events.load(std::sync::atomic::Ordering::SeqCst),
+        focus_watcher::HOOK_STATUS.load(std::sync::atomic::Ordering::SeqCst),
+        focus_watcher::LOOP_TICKS.load(std::sync::atomic::Ordering::SeqCst),
+        focus_watcher::CALLBACK_HITS.load(std::sync::atomic::Ordering::SeqCst),
+    ))
 }
 
 /// 注入文本到当前焦点输入框（async：粘贴注入含等待，避免阻塞主线程）
@@ -602,45 +618,37 @@ fn run_focus_listener(app: tauri::AppHandle) {
     {
         use focus_detector::current_foreground_process;
 
-        // 从受管状态获取 AppState
         let state = app.state::<AppState>();
 
-        // 从 watcher 取出接收端
-        let receiver = {
-            let mut watcher_guard = state.watcher.lock().unwrap();
-            watcher_guard.as_mut().and_then(|w| w.take_receiver())
-        };
-
-        if let Some(receiver) = receiver {
-            while !state.watcher_stopped.load(Ordering::SeqCst) {
-                match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
-                    Ok(hwnd) => {
-                        let _ = hwnd;
-                        // 通过 S140 获取当前前台进程名
-                        if let Ok(process) = current_foreground_process() {
-                            let should_switch = {
-                                let mut current = state.current_process.lock().unwrap();
-                                if current.eq_ignore_ascii_case(&process) {
-                                    false // AC7-3: 同一进程不重复发射
-                                } else {
-                                    *current = process;
-                                    true
-                                }
-                            };
-                            if should_switch {
-                                let _ = app.emit("ConfigSwitched", ());
-                            }
-                        }
+        // 说明：原实现经 mpsc 消费 FocusWatcher（SetWinEventHook
+        // EVENT_SYSTEM_FOREGROUND）事件。实测在 GUI 子系统（windows_subsystem
+        // = "windows"）的 Tauri 进程内，钩子注册成功（HOOK_STATUS=2）但回调
+        // 永不派发（独立测试二进制则正常），事件驱动不可用。
+        // 改为 500ms 轮询前台进程名：稳定可靠，OpenProcess +
+        // QueryFullProcessImageNameW 开销可忽略（<0.1ms/次）。
+        // 同一进程不重复发射（AC7-3）；首次检测立即执行（覆盖启动初始态）。
+        loop {
+            if state.watcher_stopped.load(Ordering::SeqCst) {
+                break;
+            }
+            if let Ok(process) = current_foreground_process() {
+                state
+                    .focus_events
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let should_switch = {
+                    let mut current = state.current_process.lock().unwrap();
+                    if current.eq_ignore_ascii_case(&process) {
+                        false // 同一进程不重复发射
+                    } else {
+                        *current = process;
+                        true
                     }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        // 无事件，继续循环
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        // 发送端已被丢弃，监听线程结束
-                        break;
-                    }
+                };
+                if should_switch {
+                    let _ = app.emit("ConfigSwitched", ());
                 }
             }
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
 }
@@ -659,6 +667,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             get_buttons,
+            focus_debug,
             inject_text,
             inject_enter,
             restore_focus,
@@ -743,6 +752,7 @@ pub fn run() {
                 current_process: Mutex::new(String::new()),
                 watcher: Mutex::new(Some(watcher)),
                 watcher_stopped: AtomicBool::new(false),
+                focus_events: std::sync::atomic::AtomicU64::new(0),
             };
 
             app.manage(app_state);

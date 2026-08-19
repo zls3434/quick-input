@@ -125,8 +125,8 @@ pub fn default_config() -> ConfigFile {
                     ButtonConfig {
                         id: "git-checkout".to_string(),
                         label: "Git Checkout".to_string(),
-                        content: "git checkout -b ".to_string(),
-                        comment: Some("新建并切换分支（后接分支名）".to_string()),
+                        content: "git checkout -b {input}".to_string(),
+                        comment: Some("新建并切换分支（{input} 填分支名）".to_string()),
                     },
                     ButtonConfig {
                         id: "git-diff".to_string(),
@@ -179,8 +179,8 @@ pub fn default_config() -> ConfigFile {
                     ButtonConfig {
                         id: "linux-ps".to_string(),
                         label: "ps grep".to_string(),
-                        content: "ps aux | grep ".to_string(),
-                        comment: Some("查看进程（后接关键字）".to_string()),
+                        content: "ps aux | grep {input}".to_string(),
+                        comment: Some("查看进程（{input} 填关键字）".to_string()),
                     },
                     ButtonConfig {
                         id: "linux-df".to_string(),
@@ -209,26 +209,26 @@ pub fn default_config() -> ConfigFile {
                     ButtonConfig {
                         id: "linux-tail".to_string(),
                         label: "tail -f".to_string(),
-                        content: "tail -f ".to_string(),
-                        comment: Some("实时查看日志（后接文件路径）".to_string()),
+                        content: "tail -f {input}".to_string(),
+                        comment: Some("实时查看日志（{input} 填文件路径）".to_string()),
                     },
                     ButtonConfig {
                         id: "linux-chmod".to_string(),
                         label: "chmod +x".to_string(),
-                        content: "chmod +x ".to_string(),
-                        comment: Some("赋予执行权限（后接文件）".to_string()),
+                        content: "chmod +x {input}".to_string(),
+                        comment: Some("赋予执行权限（{input} 填文件）".to_string()),
                     },
                     ButtonConfig {
                         id: "linux-curl".to_string(),
                         label: "curl -s".to_string(),
-                        content: "curl -s ".to_string(),
-                        comment: Some("发起请求（后接 URL）".to_string()),
+                        content: "curl -s {input}".to_string(),
+                        comment: Some("发起请求（{input} 填 URL）".to_string()),
                     },
                     ButtonConfig {
                         id: "linux-kill".to_string(),
                         label: "kill -9".to_string(),
-                        content: "kill -9 ".to_string(),
-                        comment: Some("强制结束进程（后接 PID）".to_string()),
+                        content: "kill -9 {input}".to_string(),
+                        comment: Some("强制结束进程（{input} 填 PID）".to_string()),
                     },
                     ButtonConfig {
                         id: "linux-history".to_string(),
@@ -328,5 +328,33 @@ mod tests {
     #[test]
     fn test_default_config_validates() {
         assert!(default_config().validate().is_ok(), "默认配置应通过校验");
+    }
+
+    /// 仓库根目录的 config.example.toml 必须能被当前 schema 解析并通过校验，
+    /// 防止示例文件与代码演进脱节。
+    #[test]
+    fn test_example_config_file_parses_and_validates() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../config.example.toml"
+        );
+        let content = std::fs::read_to_string(path)
+            .expect("应存在 config.example.toml（仓库根目录）");
+        let parsed: ConfigFile = toml::from_str(&content)
+            .expect("config.example.toml 应符合配置 schema");
+        assert!(parsed.validate().is_ok(), "config.example.toml 应通过校验");
+        assert!(
+            !parsed.buttons.is_empty(),
+            "config.example.toml 应包含全局按钮"
+        );
+        // 示例应演示 {input} 模板占位符
+        assert!(
+            parsed
+                .buttons
+                .iter()
+                .chain(parsed.profiles.iter().flat_map(|p| p.buttons.iter()))
+                .any(|b| b.content.contains("{input}")),
+            "config.example.toml 应包含 {{input}} 模板按钮示例"
+        );
     }
 }
