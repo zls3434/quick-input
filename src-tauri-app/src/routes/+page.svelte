@@ -155,21 +155,22 @@
   }
 
   function onBtnUp() {
-    // 松开即取消回车（单击仅输入）；注入完成后释放 injectingId
+    // 松开即取消回车（单击仅输入）
     if (holdTimer) {
       clearTimeout(holdTimer);
       holdTimer = null;
     }
     pressedId = null;
-    // 兜底恢复焦点：mousedown 注入后 WebView2 完成鼠标处理时可能激活悬浮窗，
-    // mouseup 时将前台还给注入前的目标窗口
-    void invoke("restore_focus").catch(() => {});
+    // 兜底恢复焦点：等注入完成后再恢复（注入中途切前台会截断/丢失字符）
     if (injectPromise) {
       const p = injectPromise;
       injectPromise = null;
-      p.finally(() => {
+      void p.finally(() => {
         injectingId = null;
+        void invoke("restore_focus").catch(() => {});
       });
+    } else {
+      void invoke("restore_focus").catch(() => {});
     }
   }
 
@@ -180,13 +181,15 @@
       holdTimer = null;
     }
     pressedId = null;
-    void invoke("restore_focus").catch(() => {});
     if (injectPromise) {
       const p = injectPromise;
       injectPromise = null;
-      p.finally(() => {
+      void p.finally(() => {
         injectingId = null;
+        void invoke("restore_focus").catch(() => {});
       });
+    } else {
+      void invoke("restore_focus").catch(() => {});
     }
   }
 

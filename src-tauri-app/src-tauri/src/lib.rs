@@ -55,18 +55,24 @@ fn get_buttons(state: tauri::State<AppState>) -> Result<Vec<quickinput_config::c
     Ok(buttons)
 }
 
-/// 注入文本到当前焦点输入框
+/// 注入文本到当前焦点输入框（async：粘贴注入含等待，避免阻塞主线程）
 #[tauri::command]
-fn inject_text(text: String) -> Result<(), String> {
+async fn inject_text(text: String) -> Result<(), String> {
     let injector = PlatformInjector::new();
-    injector.inject_text(&text).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || injector.inject_text(&text))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// 向当前焦点输入框发送回车键（长按输入后回车交互）
 #[tauri::command]
-fn inject_enter() -> Result<(), String> {
+async fn inject_enter() -> Result<(), String> {
     let injector = PlatformInjector::new();
-    injector.inject_enter().map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || injector.inject_enter())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// 恢复点击悬浮窗前的目标前台窗口（mouseup 后兜底，防焦点丢失）

@@ -69,6 +69,186 @@ impl Default for WindowsInjector {
     }
 }
 
+/// 剪贴板格式常量（CF_UNICODETEXT）
+const CF_UNICODETEXT: u32 = 13;
+
+/// 写入剪贴板文本（不调用 EmptyClipboard，保留图像等其他格式）
+fn set_clipboard_text(text: &str) -> Result<(), InjectError> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
+
+    unsafe {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let bytes = wide.len() * 2;
+        let hglobal = GlobalAlloc(GMEM_MOVEABLE, bytes)
+            .map_err(|_| InjectError::Unknown("GlobalAlloc 失败".into()))?;
+        let dst = GlobalLock(hglobal);
+        if dst.is_null() {
+            return Err(InjectError::Unknown("GlobalLock 失败".into()));
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, dst as *mut u8, bytes);
+        let _ = GlobalUnlock(hglobal);
+
+        if OpenClipboard(None).is_err() {
+            return Err(InjectError::Unknown("OpenClipboard 失败".into()));
+        }
+        // 失败时由系统/后续写入覆盖，内存量小不做显式释放
+        let ok = SetClipboardData(CF_UNICODETEXT, HANDLE(hglobal.0)).is_ok();
+        let _ = CloseClipboard();
+        if !ok {
+            return Err(InjectError::Unknown("SetClipboardData 失败".into()));
+        }
+    }
+    Ok(())
+}
+
+/// 读取剪贴板文本（无文本时返回 None）
+fn get_clipboard_text() -> Option<String> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        let mut result = None;
+        if IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() {
+            if let Ok(handle) = GetClipboardData(CF_UNICODETEXT) {
+                let ptr = GlobalLock(HGLOBAL(handle.0)) as *const u16;
+                if !ptr.is_null() {
+                    let mut len = 0usize;
+                    while *ptr.add(len) != 0 {
+                        len += 1;
+                    }
+                    result =
+                        Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)));
+                    let _ = GlobalUnlock(HGLOBAL(handle.0));
+                }
+            }
+        }
+        let _ = CloseClipboard();
+        result
+    }
+}
+
+/// 移除剪贴板文本格式（恢复原"无文本"状态）
+fn clear_clipboard_text() {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, OpenClipboard, SetClipboardData,
+    };
+    unsafe {
+        if OpenClipboard(None).is_ok() {
+            // hMem 传 NULL 表示移除该格式
+            let _ = SetClipboardData(CF_UNICODETEXT, HANDLE(std::ptr::null_mut()));
+            let _ = CloseClipboard();
+        }
+    }
+}
+
+/// 发送 Ctrl+V（单次 SendInput，原子）
+fn send_paste_keys() -> Result<(), InjectError> {
+    let vk_input = |vk: u16, up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [
+        vk_input(0x11, false), // Ctrl down
+        vk_input(0x56, false), // V down
+        vk_input(0x56, true),  // V up
+        vk_input(0x11, true),  // Ctrl up
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(InjectError::Unknown("SendInput 粘贴键失败".into()));
+    }
+    Ok(())
+}
+
+/// 粘贴注入：写入剪贴板 → Ctrl+V → 等待目标处理 → 恢复原剪贴板
+///
+/// 键盘注入（KEYEVENTF_UNICODE）在目标窗口开启中文输入法时会被 IME
+/// 组合处理：字母进拼音组合被吞改（"get pods"→"ssssssss"）、引号被
+/// 自动配对成对（`"`→`""`）。剪贴板粘贴完全绕过 IME，文本按字面落入，
+/// 且瞬时完成（无逐字符耗时，长文本也在毫秒级）。
+fn paste_text(text: &str) -> Result<(), InjectError> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    // 保存原文本（图像等其他格式不被动：SetClipboardData 不清空剪贴板）
+    let saved = get_clipboard_text();
+    set_clipboard_text(text)?;
+    send_paste_keys()?;
+    // 等待目标应用处理粘贴（读取剪贴板通常 <20ms，留足余量）
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    match saved {
+        Some(s) => {
+            let _ = set_clipboard_text(&s);
+        }
+        None => clear_clipboard_text(),
+    }
+    Ok(())
+}
+
+/// 构造单个 Unicode 字符的键盘事件
+#[inline]
+fn unicode_input(ch: u16, up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: ch,
+                dwFlags: if up {
+                    KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+                } else {
+                    KEYEVENTF_UNICODE
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+/// 批量原子注入：整段文本的全部 keydown/keyup 打包进一次 SendInput 调用
+///
+/// 逐字符多次调用 SendInput 时，调用间隙可能被焦点切换（restore_focus）、
+/// 窗口激活、IME 处理插入，造成字符丢失/交错。单次批量调用在系统层面
+/// 原子插入输入队列，杜绝中途打断；同时少 N-1 次系统调用，更快。
+fn send_unicode_text(text: &str) -> Result<(), InjectError> {
+    let chars: Vec<u16> = text.encode_utf16().collect();
+    let mut inputs: Vec<INPUT> = Vec::with_capacity(chars.len() * 2);
+    for ch in chars {
+        inputs.push(unicode_input(ch, false));
+        inputs.push(unicode_input(ch, true));
+    }
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(InjectError::Unknown("SendInput 注入失败".into()));
+    }
+    Ok(())
+}
+
 impl Injector for WindowsInjector {
     fn inject_text(&self, text: &str) -> Result<(), InjectError> {
         // 1. 记录焦点（RAII 保护，注入后自动恢复）
@@ -83,19 +263,16 @@ impl Injector for WindowsInjector {
         let modifiers = ModifierState::capture();
         modifiers.release();
 
-        // 3. SendInput 逐字符注入 UTF-16
-        for ch in text.encode_utf16() {
-            send_unicode_char(ch)?;
-        }
+        // 3. 剪贴板粘贴注入（绕过中文输入法）；剪贴板不可用时退回键盘注入
+        let result = paste_text(text).or_else(|_| send_unicode_text(text));
 
         // 4. 恢复修饰键
         modifiers.restore();
 
-        Ok(())
+        result
     }
 
     fn inject_enter(&self) -> Result<(), InjectError> {
-        // 回车与文本注入同样需要焦点保护与修饰键处理
         let _guard = FocusGuard::new();
         // 长按场景：刷新目标前台记录，mouseUp 后 restore_focus 仍指向正确窗口
         remember_target_foreground(unsafe {
@@ -105,7 +282,7 @@ impl Injector for WindowsInjector {
         let modifiers = ModifierState::capture();
         modifiers.release();
 
-        // 发送 VK_RETURN 按下 + 抬起
+        // 发送 VK_RETURN 按下 + 抬起（单次 SendInput，原子）
         let inputs = [
             INPUT {
                 r#type: INPUT_KEYBOARD,
@@ -133,16 +310,20 @@ impl Injector for WindowsInjector {
             },
         ];
         let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-        if sent != inputs.len() as u32 {
-            return Err(InjectError::Unknown("SendInput 回车注入失败".into()));
-        }
+        let result = if sent != inputs.len() as u32 {
+            Err(InjectError::Unknown("SendInput 回车注入失败".into()))
+        } else {
+            Ok(())
+        };
 
         modifiers.restore();
-        Ok(())
+        result
     }
 }
 
 /// 发送单个 Unicode 字符（keydown + keyup）
+/// 已被 send_unicode_text 批量原子注入取代，保留用于单字符场景测试
+#[allow(dead_code)]
 fn send_unicode_char(ch: u16) -> Result<(), InjectError> {
     let inputs = [
         INPUT {
