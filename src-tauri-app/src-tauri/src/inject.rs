@@ -46,6 +46,16 @@ pub trait Injector {
     /// - 注入后自动恢复焦点（RAII 析构或显式恢复）
     fn inject_text(&self, text: &str) -> Result<(), InjectError>;
 
+    /// 注入文本后发送 N 个左方向键（光标回退）
+    ///
+    /// 模板按钮左键输出时占位符位置留空，光标需回退到占位符处
+    /// （如 `git commit -m ""` 输出后光标落在引号中间）。
+    /// 默认实现退化为普通注入（不支持平台忽略回退）。
+    fn inject_text_ext(&self, text: &str, cursor_back: u32) -> Result<(), InjectError> {
+        let _ = cursor_back;
+        self.inject_text(text)
+    }
+
     /// 向当前焦点输入框发送回车键
     ///
     /// 供"长按输入后回车"交互使用：文本已注入完毕后补发一次 Enter。

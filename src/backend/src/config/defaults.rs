@@ -95,8 +95,8 @@ pub fn default_config() -> ConfigFile {
                     ButtonConfig {
                         id: "git-commit".to_string(),
                         label: "Git Commit".to_string(),
-                        content: "git commit -m \"\"".to_string(),
-                        comment: Some("提交（在引号内补充说明）".to_string()),
+                        content: "git commit -m \"{input}\"".to_string(),
+                        comment: Some("提交（{input} 为模板位：左键光标停在此处，右键模板输入）".to_string()),
                     },
                     ButtonConfig {
                         id: "git-push".to_string(),

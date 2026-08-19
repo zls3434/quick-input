@@ -206,6 +206,38 @@ fn paste_text(text: &str) -> Result<(), InjectError> {
     Ok(())
 }
 
+/// 发送 N 个左方向键（单次 SendInput，原子）
+///
+/// 模板按钮左键输出占位符留空后，光标回退到占位符位置
+/// （如 git commit -m "" 输出后光标落在引号中间，可直接键入内容）。
+fn send_left_keys(n: u32) -> Result<(), InjectError> {
+    if n == 0 {
+        return Ok(());
+    }
+    let vk_input = |up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x25), // VK_LEFT
+                wScan: 0,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let mut inputs: Vec<INPUT> = Vec::with_capacity((n as usize) * 2);
+    for _ in 0..n {
+        inputs.push(vk_input(false));
+        inputs.push(vk_input(true));
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(InjectError::Unknown("SendInput 方向键失败".into()));
+    }
+    Ok(())
+}
+
 /// 构造单个 Unicode 字符的键盘事件
 #[inline]
 fn unicode_input(ch: u16, up: bool) -> INPUT {
@@ -251,6 +283,10 @@ fn send_unicode_text(text: &str) -> Result<(), InjectError> {
 
 impl Injector for WindowsInjector {
     fn inject_text(&self, text: &str) -> Result<(), InjectError> {
+        self.inject_text_ext(text, 0)
+    }
+
+    fn inject_text_ext(&self, text: &str, cursor_back: u32) -> Result<(), InjectError> {
         // 1. 记录焦点（RAII 保护，注入后自动恢复）
         let _guard = FocusGuard::new();
         // 同时记录目标前台，供 mouseup 后 restore_focus 兜底恢复
@@ -263,8 +299,11 @@ impl Injector for WindowsInjector {
         let modifiers = ModifierState::capture();
         modifiers.release();
 
-        // 3. 剪贴板粘贴注入（绕过中文输入法）；剪贴板不可用时退回键盘注入
-        let result = paste_text(text).or_else(|_| send_unicode_text(text));
+        // 3. 剪贴板粘贴注入（绕过中文输入法）；剪贴板不可用时退回键盘注入；
+        //    cursor_back > 0 时追加 N 个 VK_LEFT（光标回退到占位符位置）
+        let result = paste_text(text)
+            .or_else(|_| send_unicode_text(text))
+            .and_then(|_| send_left_keys(cursor_back));
 
         // 4. 恢复修饰键
         modifiers.restore();

@@ -56,10 +56,13 @@ fn get_buttons(state: tauri::State<AppState>) -> Result<Vec<quickinput_config::c
 }
 
 /// 注入文本到当前焦点输入框（async：粘贴注入含等待，避免阻塞主线程）
+///
+/// cursor_back：注入完成后发送 N 个左方向键（模板按钮左键输出时占位符
+/// 位置留空，光标需回退到占位符处，如 git commit -m "" 光标在引号中间）
 #[tauri::command]
-async fn inject_text(text: String) -> Result<(), String> {
+async fn inject_text(text: String, cursor_back: Option<u32>) -> Result<(), String> {
     let injector = PlatformInjector::new();
-    tauri::async_runtime::spawn_blocking(move || injector.inject_text(&text))
+    tauri::async_runtime::spawn_blocking(move || injector.inject_text_ext(&text, cursor_back.unwrap_or(0)))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())

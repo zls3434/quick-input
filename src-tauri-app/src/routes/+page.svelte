@@ -139,7 +139,11 @@
     pressedId = btn.id;
     lastError = null;
     // 1. 按下立即注入文本；注入完成前锁定 injectingId（防止并发注入）
-    injectPromise = invoke("inject_text", { text: btn.content }).catch((err: unknown) => {
+    //    模板按钮左键：占位符 {input} 不输出，光标回退到占位符位置
+    const isTpl = isTemplateBtn(btn);
+    const outText = isTpl ? removePlaceholder(btn.content) : btn.content;
+    const cursorBack = isTpl ? charsAfterPlaceholder(btn.content) : 0;
+    injectPromise = invoke("inject_text", { text: outText, cursorBack }).catch((err: unknown) => {
       console.error(`注入失败 [${btn.label}]: ${err}`);
       lastError = `注入失败: ${err}`;
     });
@@ -195,13 +199,30 @@
   }
 
   // ---- 按钮右键：自定义菜单 + 模板输入（原生 DOM 实现）----
-  // 模板按钮：content 含空引号 ""（如 git commit -m ""），引号内为模板插入位。
-  // 右键菜单选择"模板输入"→ 弹窗填写内容（如 first init）→ 确认后合并注入
-  // （git commit -m "first init"）。非模板按钮菜单项禁用，仅左键快捷输入。
+  // 模板占位符：{input}。content 含 {input} 即为模板按钮（如 git commit -m "{input}"），
+  // 位置任意、不依赖引号。右键菜单"模板输入"→ 弹窗填写（如 first init）→ 确认后
+  // 合并注入（git commit -m "first init"）。
+  // 左键：占位符不输出（其余内容原样注入），并回退光标到占位符位置
+  // （如 git commit -m "{input}" 左键输出 git commit -m ""，光标在引号中间）。
+  // 非模板按钮菜单项禁用，仅左键快捷输入。
   // 用原生 DOM 而非 Svelte 响应式：contextmenu 事件来自 window capture 委托，
   // 逃逸闭包中的状态更新在 legacy 模式下不保证触发重渲染。
+  const PLACEHOLDER = "{input}";
+
   function isTemplateBtn(btn: ButtonConfig): boolean {
-    return btn.content.includes('""');
+    return btn.content.includes(PLACEHOLDER);
+  }
+
+  // 占位符后的字符数（左键注入后光标需回退的步数）
+  function charsAfterPlaceholder(content: string): number {
+    const idx = content.indexOf(PLACEHOLDER);
+    if (idx < 0) return 0;
+    return content.length - idx - PLACEHOLDER.length;
+  }
+
+  // 移除占位符（左键输出内容）
+  function removePlaceholder(content: string): string {
+    return content.replace(PLACEHOLDER, "");
   }
 
   function removeCtxMenu() {
@@ -212,9 +233,9 @@
     document.querySelector(".template-dialog")?.remove();
   }
 
-  // 合并模板：引号内填入内容
+  // 合并模板：占位符填入内容
   function mergeTemplate(content: string, value: string): string {
-    return content.replace('""', `"${value}"`);
+    return content.replace(PLACEHOLDER, value);
   }
 
   // 模板注入（确认后调用）
@@ -293,7 +314,7 @@
     if (!isTpl) {
       const hint = document.createElement("div");
       hint.className = "ctx-hint";
-      hint.textContent = '该按钮内容不含 "" 模板位';
+      hint.textContent = "该按钮内容不含 {input} 占位符";
       menu.appendChild(hint);
     }
     // 定位：右键坐标（视口内），防溢出
