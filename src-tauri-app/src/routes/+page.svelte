@@ -121,19 +121,68 @@
     }
   }
 
-  async function handleClick(btn: ButtonConfig) {
-    if (injectingId !== null) return; // 防止重复点击
+  // ---- 按钮交互：单击输入，长按（>2s）输入后回车 ----
+  // 按下（mousedown）即开始注入文本，同时启动 2 秒定时器：
+  // - 2 秒内松开：仅输入，不回车（单击）
+  // - 按住超过 2 秒：注入完成后自动补发回车（长按执行）
+  // 回车任务排队在文本注入之后，注入慢也不会被回车截断
+  // （注入本身为 SendInput 批量注入，毫秒级完成，远快于 2 秒阈值）。
+  const HOLD_MS = 2000;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let pressedId: string | null = null;
+  let injectPromise: Promise<void> | null = null;
+
+  async function onBtnDown(btn: ButtonConfig) {
+    if (injectingId !== null) return; // 注入进行中禁止并发
     injectingId = btn.id;
+    pressedId = btn.id;
     lastError = null;
-    try {
-      // 调用 M2 注入引擎，将按钮 content 注入到当前焦点输入框
-      await invoke("inject_text", { text: btn.content });
-    } catch (e) {
-      // AC3-3: 注入失败不崩溃，输出控制台错误日志
+    // 1. 按下立即注入文本；注入完成前锁定 injectingId（防止并发注入）
+    injectPromise = invoke("inject_text", { text: btn.content }).catch((e) => {
       console.error(`注入失败 [${btn.label}]: ${e}`);
       lastError = `注入失败: ${e}`;
-    } finally {
-      injectingId = null;
+    });
+    // 2. 启动长按定时器：超过 2 秒触发回车（等文本注入完成，避免截断）
+    holdTimer = setTimeout(async () => {
+      holdTimer = null;
+      await injectPromise;
+      try {
+        await invoke("inject_enter");
+      } catch (e) {
+        console.error(`回车注入失败: ${e}`);
+      }
+    }, HOLD_MS);
+  }
+
+  function onBtnUp() {
+    // 松开即取消回车（单击仅输入）；注入完成后释放 injectingId
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    pressedId = null;
+    if (injectPromise) {
+      const p = injectPromise;
+      injectPromise = null;
+      p.finally(() => {
+        injectingId = null;
+      });
+    }
+  }
+
+  function onBtnLeave() {
+    // 按住拖出按钮范围：取消回车（防误触），已注入文本保留
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+    }
+    pressedId = null;
+    if (injectPromise) {
+      const p = injectPromise;
+      injectPromise = null;
+      p.finally(() => {
+        injectingId = null;
+      });
     }
   }
 
@@ -239,6 +288,7 @@
     setTimeout(() => scheduleAdjust(), 300);
 
     return () => {
+      if (holdTimer) clearTimeout(holdTimer);
       window.removeEventListener("mousedown", blockFocusSteal, true);
       unlisten.then((fn) => fn());
       unlistenMoved.then((fn) => fn());
@@ -357,8 +407,10 @@
           class="button-item"
           class:is-clicking={injectingId === btn.id}
           data-id={btn.id}
-          disabled={injectingId !== null}
-          onclick={() => handleClick(btn)}
+          disabled={injectingId !== null && injectingId !== btn.id}
+          onmousedown={() => onBtnDown(btn)}
+          onmouseup={onBtnUp}
+          onmouseleave={onBtnLeave}
         >
           <Tooltip text={btn.comment}>
             <span class="button-label">{btn.label}</span>

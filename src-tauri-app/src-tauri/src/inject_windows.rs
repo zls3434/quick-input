@@ -49,6 +49,48 @@ impl Injector for WindowsInjector {
 
         Ok(())
     }
+
+    fn inject_enter(&self) -> Result<(), InjectError> {
+        // 回车与文本注入同样需要焦点保护与修饰键处理
+        let _guard = FocusGuard::new();
+        let modifiers = ModifierState::capture();
+        modifiers.release();
+
+        // 发送 VK_RETURN 按下 + 抬起
+        let inputs = [
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0x0D), // VK_RETURN
+                        wScan: 0,
+                        dwFlags: Default::default(),
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0x0D),
+                        wScan: 0,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if sent != inputs.len() as u32 {
+            return Err(InjectError::Unknown("SendInput 回车注入失败".into()));
+        }
+
+        modifiers.restore();
+        Ok(())
+    }
 }
 
 /// 发送单个 Unicode 字符（keydown + keyup）

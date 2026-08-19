@@ -62,6 +62,13 @@ fn inject_text(text: String) -> Result<(), String> {
     injector.inject_text(&text).map_err(|e| e.to_string())
 }
 
+/// 向当前焦点输入框发送回车键（长按输入后回车交互）
+#[tauri::command]
+fn inject_enter() -> Result<(), String> {
+    let injector = PlatformInjector::new();
+    injector.inject_enter().map_err(|e| e.to_string())
+}
+
 /// 查询开机自启是否启用
 #[tauri::command]
 fn is_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
@@ -637,6 +644,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_buttons,
             inject_text,
+            inject_enter,
             reload_config,
             is_autostart_enabled,
             toggle_autostart,

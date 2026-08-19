@@ -45,6 +45,14 @@ pub trait Injector {
     /// - 注入前通过 `FocusGuard` 记录当前焦点
     /// - 注入后自动恢复焦点（RAII 析构或显式恢复）
     fn inject_text(&self, text: &str) -> Result<(), InjectError>;
+
+    /// 向当前焦点输入框发送回车键
+    ///
+    /// 供"长按输入后回车"交互使用：文本已注入完毕后补发一次 Enter。
+    /// 默认实现返回不支持，各平台可按需覆盖。
+    fn inject_enter(&self) -> Result<(), InjectError> {
+        Err(InjectError::Unknown("当前平台不支持回车注入".into()))
+    }
 }
 
 // ============================================================
