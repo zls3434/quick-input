@@ -552,6 +552,27 @@ fn reset_overlay_geometry_command(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 恢复默认按钮与进程映射（保留悬浮窗/快捷键设置）
+///
+/// 用于程序版本更新后默认按钮变化、或用户希望回到出厂按钮配置的场景。
+/// 仅重置 `buttons` 与 `profiles`，`[overlay]`/`[shortcuts]` 个性化设置保留。
+#[tauri::command]
+fn reset_config_to_default(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    {
+        let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+        let default = quickinput_config::config::defaults::default_config();
+        let config = mgr.config_mut();
+        config.buttons = default.buttons;
+        config.profiles = default.profiles;
+        mgr.save().map_err(|e| e.to_string())?;
+    }
+    app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 消费焦点监听事件，焦点切换时更新当前进程并发射 ConfigSwitched
 fn run_focus_listener(app: tauri::AppHandle) {
     #[cfg(target_os = "windows")]
@@ -641,6 +662,7 @@ pub fn run() {
             get_shortcuts,
             set_shortcut,
             check_shortcut_available,
+            reset_config_to_default,
         ])
         // 浮层页面加载完成后：先应用样式与几何，再显示窗口。
         // 窗口初始隐藏（tauri.conf.json visible:false）以避免 WebView2 内容未就绪时

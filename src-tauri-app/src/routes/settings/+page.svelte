@@ -427,6 +427,19 @@
     }
   }
 
+  // 恢复默认按钮与进程映射（保留悬浮窗/快捷键设置）
+  async function resetConfigToDefault() {
+    if (!confirm("将恢复默认按钮与进程映射，替换当前所有自定义按钮（悬浮窗与快捷键设置保留）。确定继续？")) return;
+    try {
+      await invoke("reset_config_to_default");
+      await loadButtons();
+      await loadProfiles();
+      error = null;
+    } catch (e) {
+      error = `恢复默认配置失败: ${e}`;
+    }
+  }
+
   onMount(() => {
     loadButtons();
     loadProfiles();
@@ -760,6 +773,7 @@
     <div class="share-toolbar">
       <button class="btn-secondary" onclick={exportConfig}>导出配置</button>
       <button class="btn-secondary" onclick={importConfig}>导入配置</button>
+      <button class="btn-secondary btn-warn" onclick={resetConfigToDefault}>恢复默认配置</button>
     </div>
   </div>
 </main>
@@ -1093,6 +1107,8 @@
     font-size: 12px;
   }
   .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+  .btn-warn { color: #e8a33d; }
+  .btn-warn:hover { background: rgba(232,163,61,0.15); }
 
   .edit-form {
     background: rgba(255,255,255,0.05);
