@@ -133,7 +133,13 @@
   let injectPromise: Promise<void> | null = null;
 
   async function onBtnDown(e: MouseEvent, btn: ButtonConfig) {
-    if (e.button !== 0) return; // 仅左键注入（右键留给自定义菜单）
+    // 右键：按下立即弹自定义菜单（不依赖 contextmenu 事件——部分鼠标/触控板
+    // 驱动右键不产生 WM_CONTEXTMENU，导致只监听 contextmenu 时菜单无法触发）
+    if (e.button === 2) {
+      showCtxMenu(e, btn);
+      return;
+    }
+    if (e.button !== 0) return; // 其他键忽略
        if (injectingId !== null) return; // 注入进行中禁止并发
     injectingId = btn.id;
     pressedId = btn.id;
@@ -298,10 +304,15 @@
 
   // 弹出右键自定义菜单（原生 DOM）
   function showCtxMenu(e: MouseEvent, btn: ButtonConfig) {
+    // 去重：同一按钮的菜单已在显示（右键按下 mousedown 已弹，松开后的
+    // contextmenu 兜底事件不重建，避免菜单闪烁/位移）
+    const existing = document.querySelector<HTMLElement>(".ctx-menu");
+    if (existing && existing.dataset.btnId === btn.id) return;
     removeCtxMenu();
     removeTemplateDialog();
     const menu = document.createElement("div");
     menu.className = "ctx-menu";
+    menu.dataset.btnId = btn.id;
     const item = document.createElement("button");
     item.className = "ctx-item";
     const isTpl = isTemplateBtn(btn);
