@@ -446,6 +446,31 @@
     loadOverlayLayout();
     loadAutostart();
     loadShortcuts();
+
+    // Esc 关闭编辑弹窗
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (editing) cancelEdit();
+      else if (profEditing) cancelProfileEdit();
+    };
+    window.addEventListener("keydown", onKeydown);
+    return () => window.removeEventListener("keydown", onKeydown);
+  });
+
+  // 弹窗打开时自动聚焦第一个输入框
+  $effect(() => {
+    if (editing) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLInputElement>(".modal-overlay input")?.focus();
+      });
+    }
+  });
+  $effect(() => {
+    if (profEditing) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLInputElement>(".modal-overlay input")?.focus();
+      });
+    }
   });
 </script>
 
@@ -494,33 +519,6 @@
         <button class="btn-primary" onclick={startNew}>+ 新增</button>
       </div>
 
-      {#if editing}
-        <div class="edit-form">
-          <h3>{editMode === "new" ? "新增按钮" : "编辑按钮"}</h3>
-          {#if saveError}
-            <div class="form-error">{saveError}</div>
-          {/if}
-          {#if editMode === "new"}
-            <label>
-              ID <input bind:value={editId} placeholder="唯一标识，如 git-status" />
-            </label>
-          {/if}
-          <label>
-            标签 <input bind:value={editLabel} placeholder="显示名称，如 Git Status" />
-          </label>
-          <label>
-            内容 <input bind:value={editContent} placeholder="注入文本/命令，如 git status" />
-          </label>
-          <label>
-            注释 <input bind:value={editComment} placeholder="悬浮注释说明（可选）" />
-          </label>
-          <div class="form-actions">
-            <button class="btn-cancel" onclick={cancelEdit}>取消</button>
-            <button class="btn-primary" onclick={editMode === "new" ? saveNew : saveEdit}>保存</button>
-          </div>
-        </div>
-      {/if}
-
       <div class="button-list">
         {#each buttons as btn (btn.id)}
           <div class="button-row">
@@ -544,75 +542,6 @@
         <span class="count">{profiles.length} 个应用映射</span>
         <button class="btn-primary" onclick={startNewProfile}>+ 新增映射</button>
       </div>
-
-      {#if profEditing}
-        <div class="edit-form">
-          <h3>{profEditingOriginal === "" ? "新增应用映射" : "编辑应用映射"}</h3>
-          {#if profSaveError}
-            <div class="form-error">{profSaveError}</div>
-          {/if}
-          <label>
-            映射名称（可选） <input bind:value={profName} placeholder="自定义显示名，如 我的浏览器；留空显示进程名" />
-          </label>
-          <label>
-            绑定进程 <input bind:value={profProcessName} placeholder="可手动输入，如 Code.exe" />
-          </label>
-          <label>
-            从运行窗口选择
-            <div class="process-picker">
-              <select onchange={onPickProcess} class="process-select">
-                <option value="">{processesLoading ? "加载中..." : `选择进程（共 ${runningProcesses.length} 个）`}</option>
-                {#each runningProcesses as p (p.process_name)}
-                  <option value={p.process_name}>{p.process_name} — {p.window_title.slice(0, 40)}</option>
-                {/each}
-              </select>
-              <button class="btn-secondary" onclick={loadRunningProcesses}>刷新</button>
-            </div>
-          </label>
-
-          <div class="picker-section">
-            <div class="section-title">已选按钮（{profSelectedButtons.length}）</div>
-            {#if profSelectedButtons.length === 0}
-              <div class="picker-empty">尚未选择按钮</div>
-            {:else}
-              <div class="picker-list">
-                {#each profSelectedButtons as b, i (b.id)}
-                  <div class="picker-row">
-                    <div class="picker-info">
-                      <span class="p-label">{b.label}</span>
-                      <span class="p-content">{b.content}</span>
-                    </div>
-                    <button class="btn-delete" onclick={() => removeFromSelected(i)}>移除</button>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-
-          <div class="picker-section">
-            <div class="section-title">从现有按钮添加</div>
-            {#if candidateButtons.length === 0}
-              <div class="picker-empty">没有可选按钮，请先在"默认按钮"或其他映射中创建</div>
-            {:else}
-              <div class="picker-list">
-                {#each candidateButtons as b (b.id)}
-                  <div class="picker-row">
-                    <div class="picker-info">
-                      <span class="p-label">{b.label}</span>
-                      <span class="p-content">{b.content}</span>
-                    </div>
-                    <button class="btn-edit" onclick={() => addToSelected(b)}>添加</button>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          <div class="form-actions">
-            <button class="btn-cancel" onclick={cancelProfileEdit}>取消</button>
-            <button class="btn-primary" onclick={saveProfile}>保存</button>
-          </div>
-        </div>
-      {/if}
 
       <div class="button-list">
         {#each profiles as p (p.process_name)}
@@ -767,6 +696,110 @@
           拖动悬浮窗右上角移动按钮可移动位置，位置会被记忆，下次启动悬浮窗将停留在
           上次的位置；两种布局各自独立记忆。基础配置保存后立即生效并持久化。
         </p>
+      </div>
+    {/if}
+
+    {#if editing}
+      <div class="modal-overlay" onclick={cancelEdit} role="presentation">
+        <div class="modal-box" onclick={(e) => e.stopPropagation()}>
+          <div class="edit-form">
+            <h3 class="modal-title">{editMode === "new" ? "新增按钮" : "编辑按钮"}</h3>
+            {#if saveError}
+              <div class="form-error">{saveError}</div>
+            {/if}
+            {#if editMode === "new"}
+              <label>
+                ID <input bind:value={editId} placeholder="唯一标识，如 git-status" />
+              </label>
+            {/if}
+            <label>
+              标签 <input bind:value={editLabel} placeholder="显示名称，如 Git Status" />
+            </label>
+            <label>
+              内容 <input bind:value={editContent} placeholder="注入文本/命令，如 git status" />
+            </label>
+            <label>
+              注释 <input bind:value={editComment} placeholder="悬浮注释说明（可选）" />
+            </label>
+            <div class="form-actions">
+              <button class="btn-cancel" onclick={cancelEdit}>取消</button>
+              <button class="btn-primary" onclick={editMode === "new" ? saveNew : saveEdit}>保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if profEditing}
+      <div class="modal-overlay" onclick={cancelProfileEdit} role="presentation">
+        <div class="modal-box modal-wide" onclick={(e) => e.stopPropagation()}>
+          <div class="edit-form">
+            <h3 class="modal-title">{profEditingOriginal === "" ? "新增应用映射" : "编辑应用映射"}</h3>
+            {#if profSaveError}
+              <div class="form-error">{profSaveError}</div>
+            {/if}
+            <label>
+              映射名称（可选） <input bind:value={profName} placeholder="自定义显示名，如 我的浏览器；留空显示进程名" />
+            </label>
+            <label>
+              绑定进程 <input bind:value={profProcessName} placeholder="可手动输入，如 Code.exe" />
+            </label>
+            <label>
+              从运行窗口选择
+              <div class="process-picker">
+                <select onchange={onPickProcess} class="process-select">
+                  <option value="">{processesLoading ? "加载中..." : `选择进程（共 ${runningProcesses.length} 个）`}</option>
+                  {#each runningProcesses as p (p.process_name)}
+                    <option value={p.process_name}>{p.process_name} — {p.window_title.slice(0, 40)}</option>
+                  {/each}
+                </select>
+                <button class="btn-secondary" onclick={loadRunningProcesses}>刷新</button>
+              </div>
+            </label>
+
+            <div class="picker-section">
+              <div class="section-title">已选按钮（{profSelectedButtons.length}）</div>
+              {#if profSelectedButtons.length === 0}
+                <div class="picker-empty">尚未选择按钮</div>
+              {:else}
+                <div class="picker-list">
+                  {#each profSelectedButtons as b, i (b.id)}
+                    <div class="picker-row">
+                      <div class="picker-info">
+                        <span class="p-label">{b.label}</span>
+                        <span class="p-content">{b.content}</span>
+                      </div>
+                      <button class="btn-delete" onclick={() => removeFromSelected(i)}>移除</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="picker-section">
+              <div class="section-title">从现有按钮添加</div>
+              {#if candidateButtons.length === 0}
+                <div class="picker-empty">没有可选按钮，请先在"默认按钮"或其他映射中创建</div>
+              {:else}
+                <div class="picker-list">
+                  {#each candidateButtons as b (b.id)}
+                    <div class="picker-row">
+                      <div class="picker-info">
+                        <span class="p-label">{b.label}</span>
+                        <span class="p-content">{b.content}</span>
+                      </div>
+                      <button class="btn-edit" onclick={() => addToSelected(b)}>添加</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <div class="form-actions">
+              <button class="btn-cancel" onclick={cancelProfileEdit}>取消</button>
+              <button class="btn-primary" onclick={saveProfile}>保存</button>
+            </div>
+          </div>
+        </div>
       </div>
     {/if}
 
@@ -1111,10 +1144,45 @@
   .btn-warn:hover { background: rgba(232,163,61,0.15); }
 
   .edit-form {
-    background: rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.05);
     border-radius: 6px;
     padding: 12px;
     margin-bottom: 12px;
+  }
+
+  /* 编辑弹窗（模态遮罩 + 居中卡片） */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .modal-box {
+    width: 400px;
+    max-width: calc(100vw - 48px);
+    max-height: 86vh;
+    overflow-y: auto;
+    background: rgba(42, 42, 46, 0.99);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+  .modal-box.modal-wide {
+    width: 540px;
+  }
+  .modal-box .edit-form {
+    background: none;
+    padding: 0;
+    margin: 0;
+  }
+  .modal-title {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    font-weight: 600;
   }
   .edit-form h3 {
     margin: 0 0 10px 0;
