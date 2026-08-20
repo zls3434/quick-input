@@ -3,6 +3,67 @@
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
+  // 指针拖拽排序 action：完全绕开浏览器 HTML5 DnD 引擎（其在 WebView2 中
+  // 的 drop 派发不可靠且会显示禁止光标），改用 pointer 事件自行跟踪：
+  // pointerdown（行上）记录源行 → pointermove（全局）用 elementFromPoint
+  // 定位目标行 → pointerup（全局）一次性执行移动排序。move/up 必须挂在
+  // window 上：鼠标离开源行后事件不再冒泡到源行，行级监听会丢失跟踪。
+  function pointerSort(
+    node: HTMLElement,
+    opts: { onMove: (from: number, to: number) => void }
+  ) {
+    let dragging = false;
+    let from = -1;
+    let target = -1;
+    let targetEl: HTMLElement | null = null;
+
+    const down = (e: PointerEvent) => {
+      // 移除按钮等交互元素上的按下不触发拖拽
+      if ((e.target as HTMLElement).closest?.("button")) return;
+      from = Number(node.dataset.idx);
+      dragging = true;
+      target = -1;
+      targetEl = null;
+      node.classList.add("dragging");
+      e.preventDefault();
+    };
+    const move = (e: PointerEvent) => {
+      if (!dragging) return;
+      const el = document
+        .elementFromPoint(e.clientX, e.clientY)
+        ?.closest?.(".picker-row") as HTMLElement | null;
+      const idx = el ? Number(el.dataset.idx) : -1;
+      if (idx !== target || el !== targetEl) {
+        targetEl?.classList.remove("drop-target");
+        target = idx;
+        targetEl = el;
+        targetEl?.classList.add("drop-target");
+      }
+    };
+    const up = () => {
+      if (dragging) {
+        node.classList.remove("dragging");
+        targetEl?.classList.remove("drop-target");
+        if (target >= 0 && target !== from) opts.onMove(from, target);
+      }
+      dragging = false;
+      target = -1;
+      targetEl = null;
+    };
+    node.addEventListener("pointerdown", down);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return {
+      destroy() {
+        node.removeEventListener("pointerdown", down);
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+      },
+    };
+  }
+
   interface ButtonConfig {
     id: string;
     label: string;
@@ -264,8 +325,6 @@
   let defEditing = $state(false);
   let defSelectedButtons = $state<ButtonConfig[]>([]);
   let defSaveError = $state<string | null>(null);
-  // 拖拽排序：记录拖动起始下标
-  let dragFrom = $state(-1);
   // 运行进程列表（供绑定进程选择）
   let runningProcesses = $state<RunningProcess[]>([]);
   let processesLoading = $state(false);
@@ -316,17 +375,9 @@
     return unique.filter((b) => !selectedIds.has(b.id));
   });
 
-  // 拖拽排序：通用（prof=应用映射已选列表，def=默认映射已选列表）
-  function onDragStart(i: number) {
-    dragFrom = i;
-  }
-  function onDrop(list: "prof" | "def", to: number) {
-    if (dragFrom < 0 || dragFrom === to) {
-      dragFrom = -1;
-      return;
-    }
-    const from = dragFrom;
-    dragFrom = -1;
+  // 指针拖拽排序：把 from 行移动到 to 位置（prof=应用映射，def=默认映射）
+  function moveItem(list: "prof" | "def", from: number, to: number) {
+    if (from < 0 || from === to) return;
     if (list === "prof") {
       const arr = [...profSelectedButtons];
       const [it] = arr.splice(from, 1);
@@ -871,12 +922,10 @@
                   {#each profSelectedButtons as b, i (b.id)}
                     <div
                       class="picker-row"
-                      draggable="true"
-                      ondragstart={() => onDragStart(i)}
-                      ondragover={(e) => e.preventDefault()}
-                      ondrop={() => onDrop("prof", i)}
+                      data-idx={i}
+                      use:pointerSort={{ onMove: (f, t) => moveItem("prof", f, t) }}
                     >
-                      <span class="drag-handle" title="拖拽调整顺序">⠿</span>
+                      <span class="drag-handle" title="按住拖动调整顺序">⠿</span>
                       <div class="picker-info">
                         <span class="p-label">{b.label}</span>
                         <span class="p-content">{b.content}</span>
@@ -937,12 +986,10 @@
                   {#each defSelectedButtons as b, i (b.id)}
                     <div
                       class="picker-row"
-                      draggable="true"
-                      ondragstart={() => onDragStart(i)}
-                      ondragover={(e) => e.preventDefault()}
-                      ondrop={() => onDrop("def", i)}
+                      data-idx={i}
+                      use:pointerSort={{ onMove: (f, t) => moveItem("def", f, t) }}
                     >
-                      <span class="drag-handle" title="拖拽调整顺序">⠿</span>
+                      <span class="drag-handle" title="按住拖动调整顺序">⠿</span>
                       <div class="picker-info">
                         <span class="p-label">{b.label}</span>
                         <span class="p-content">{b.content}</span>
@@ -1483,7 +1530,7 @@
     color: #999;
     line-height: 1.5;
   }
-  /* 拖拽排序手柄 */
+  /* 拖拽排序手柄与拖拽视觉反馈 */
   .drag-handle {
     color: #777;
     font-size: 14px;
@@ -1492,11 +1539,16 @@
     flex-shrink: 0;
     padding: 0 2px;
   }
-  .picker-row[draggable="true"] {
-    cursor: grab;
+  .picker-row {
+    user-select: none;
   }
-  .picker-row[draggable="true"]:active {
-    cursor: grabbing;
+  .picker-row.dragging {
+    opacity: 0.5;
+  }
+  .picker-row.drop-target {
+    outline: 1px dashed rgba(122, 162, 247, 0.8);
+    outline-offset: -1px;
+    background: rgba(122, 162, 247, 0.12);
   }
   .form-actions {
     display: flex;
