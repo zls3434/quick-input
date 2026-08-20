@@ -32,6 +32,7 @@ fn create_button_fixture_with_comment(
 /// 创建测试用的默认配置夹具
 fn create_default_config_fixture() -> ConfigFile {
 ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![
@@ -282,6 +283,7 @@ fn test_empty_config_is_valid() {
 /// 创建仅含 profiles 的测试配置夹具
 fn create_profile_config_fixture() -> ConfigFile {
 ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![create_button_fixture("default-1", "Default", "echo default")],
@@ -392,6 +394,59 @@ fn test_ac4_1_fallback_never_panics() {
     assert!(buttons.is_empty(), "空配置回退应为空列表");
 }
 
+// AC4-2: 默认映射（default_buttons）优先于默认按钮回退
+#[test]
+fn test_default_buttons_take_priority_over_global_buttons() {
+    let mut config = create_profile_config_fixture();
+    config.default_buttons = vec![
+        create_button_fixture("d1", "Default 1", "echo d1"),
+        create_button_fixture("d2", "Default 2", "echo d2"),
+    ];
+    let buttons = config.get_buttons_current("UnknownApp.exe");
+    assert_eq!(buttons.len(), 2, "无匹配进程应优先返回默认映射按钮");
+    assert_eq!(buttons[0].id, "d1");
+    assert_eq!(buttons[1].id, "d2");
+    // 顺序固化：default_buttons 顺序即返回顺序
+    config.default_buttons.reverse();
+    let buttons = config.get_buttons_current("UnknownApp.exe");
+    assert_eq!(buttons[0].id, "d2", "顺序应随配置固化");
+}
+
+// AC4-2: 默认映射为空时仍回退全局默认按钮（兼容旧配置）
+#[test]
+fn test_default_buttons_empty_falls_back_to_global() {
+    let config = create_profile_config_fixture();
+    // fixture 无 default_buttons（空）
+    let buttons = config.get_buttons_current("UnknownApp.exe");
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(buttons[0].id, "default-1");
+}
+
+// AC4-2: 默认映射内按钮 ID 重复时校验失败
+#[test]
+fn test_default_buttons_duplicate_id_fails_validation() {
+    let mut config = create_profile_config_fixture();
+    config.default_buttons = vec![
+        create_button_fixture("dup", "A", "a"),
+        create_button_fixture("dup", "B", "b"),
+    ];
+    let err = config.validate().unwrap_err();
+    assert!(err.message.contains("重复"), "重复 ID 应报错: {}", err.message);
+}
+
+// AC4-2: 默认映射按钮缺标签/内容时校验失败
+#[test]
+fn test_default_buttons_invalid_button_fails_validation() {
+    let mut config = create_profile_config_fixture();
+    config.default_buttons = vec![ButtonConfig {
+        id: "x".into(),
+        label: String::new(),
+        content: "c".into(),
+        comment: None,
+    }];
+    assert!(config.validate().is_err(), "空标签应校验失败");
+}
+
 // AC4-4: 配置加载失败隔离（验证方法签名不 panic）
 #[test]
 fn test_ac4_4_loading_error_does_not_affect_other_modules() {
@@ -416,6 +471,7 @@ fn test_validate_empty_config_ok() {
 #[test]
 fn test_validate_valid_buttons_ok() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![
@@ -431,6 +487,7 @@ buttons: vec![
 #[test]
 fn test_validate_empty_id_fails() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![create_button_fixture("", "A", "aaa")],
@@ -444,6 +501,7 @@ buttons: vec![create_button_fixture("", "A", "aaa")],
 #[test]
 fn test_validate_empty_label_fails() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![create_button_fixture("a", " ", "aaa")],
@@ -457,6 +515,7 @@ buttons: vec![create_button_fixture("a", " ", "aaa")],
 #[test]
 fn test_validate_duplicate_id_fails() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![
@@ -473,6 +532,7 @@ buttons: vec![
 #[test]
 fn test_validate_empty_process_name_fails() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![],
@@ -490,6 +550,7 @@ buttons: vec![],
 #[test]
 fn test_validate_duplicate_process_name_case_insensitive_fails() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![],
@@ -514,6 +575,7 @@ buttons: vec![],
 #[test]
 fn test_validate_valid_profile_ok() {
     let config = ConfigFile {
+                default_buttons: vec![],
                 overlay: None,
                 shortcuts: None,
 buttons: vec![],

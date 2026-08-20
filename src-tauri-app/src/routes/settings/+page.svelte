@@ -214,6 +214,41 @@
     } catch (e) {
       error = `加载应用映射失败: ${e}`;
     }
+    try {
+      defaultButtons = await invoke<ButtonConfig[]>("get_default_profile");
+    } catch (e) {
+      console.error("加载默认映射失败", e);
+    }
+  }
+
+  function startEditDefault() {
+    defSelectedButtons = defaultButtons.map((b) => ({ ...b }));
+    defSaveError = null;
+    defEditing = true;
+  }
+
+  function cancelDefaultEdit() {
+    defEditing = false;
+    defSaveError = null;
+  }
+
+  function addToDef(btn: ButtonConfig) {
+    defSelectedButtons = [...defSelectedButtons, { ...btn }];
+  }
+
+  function removeFromDef(index: number) {
+    defSelectedButtons = defSelectedButtons.filter((_, i) => i !== index);
+  }
+
+  async function saveDefault() {
+    defSaveError = null;
+    try {
+      await invoke("update_default_profile", { buttons: defSelectedButtons.map((b) => ({ ...b })) });
+      defEditing = false;
+      defaultButtons = defSelectedButtons.map((b) => ({ ...b }));
+    } catch (e) {
+      defSaveError = `${e}`;
+    }
   }
 
   // ---- 应用画像表单状态 ----
@@ -224,6 +259,13 @@
   // 已选按钮（完整 ButtonConfig，保留原 id/label/content/comment）
   let profSelectedButtons = $state<ButtonConfig[]>([]);
   let profSaveError = $state<string | null>(null);
+  // ---- 默认映射状态（未匹配任何应用画像时使用）----
+  let defaultButtons = $state<ButtonConfig[]>([]);
+  let defEditing = $state(false);
+  let defSelectedButtons = $state<ButtonConfig[]>([]);
+  let defSaveError = $state<string | null>(null);
+  // 拖拽排序：记录拖动起始下标
+  let dragFrom = $state(-1);
   // 运行进程列表（供绑定进程选择）
   let runningProcesses = $state<RunningProcess[]>([]);
   let processesLoading = $state(false);
@@ -258,6 +300,45 @@
     const selectedIds = new Set(profSelectedButtons.map((b) => b.id));
     return unique.filter((b) => !selectedIds.has(b.id));
   });
+
+  // 默认映射的候选按钮：同样排除默认映射已选按钮
+  const candidateForDefault = $derived.by(() => {
+    const all = [...buttons, ...profiles.flatMap((p) => p.buttons), ...defaultButtons];
+    const seen = new Set<string>();
+    const unique: ButtonConfig[] = [];
+    for (const b of all) {
+      if (!seen.has(b.id)) {
+        seen.add(b.id);
+        unique.push(b);
+      }
+    }
+    const selectedIds = new Set(defSelectedButtons.map((b) => b.id));
+    return unique.filter((b) => !selectedIds.has(b.id));
+  });
+
+  // 拖拽排序：通用（prof=应用映射已选列表，def=默认映射已选列表）
+  function onDragStart(i: number) {
+    dragFrom = i;
+  }
+  function onDrop(list: "prof" | "def", to: number) {
+    if (dragFrom < 0 || dragFrom === to) {
+      dragFrom = -1;
+      return;
+    }
+    const from = dragFrom;
+    dragFrom = -1;
+    if (list === "prof") {
+      const arr = [...profSelectedButtons];
+      const [it] = arr.splice(from, 1);
+      arr.splice(to, 0, it);
+      profSelectedButtons = arr;
+    } else {
+      const arr = [...defSelectedButtons];
+      const [it] = arr.splice(from, 1);
+      arr.splice(to, 0, it);
+      defSelectedButtons = arr;
+    }
+  }
 
   function startNewProfile() {
     profEditing = true;
@@ -452,6 +533,7 @@
       if (e.key !== "Escape") return;
       if (editing) cancelEdit();
       else if (profEditing) cancelProfileEdit();
+      else if (defEditing) cancelDefaultEdit();
     };
     window.addEventListener("keydown", onKeydown);
     return () => window.removeEventListener("keydown", onKeydown);
@@ -467,6 +549,13 @@
   });
   $effect(() => {
     if (profEditing) {
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLInputElement>(".modal-overlay input")?.focus();
+      });
+    }
+  });
+  $effect(() => {
+    if (defEditing) {
       requestAnimationFrame(() => {
         document.querySelector<HTMLInputElement>(".modal-overlay input")?.focus();
       });
@@ -541,6 +630,20 @@
       <div class="toolbar">
         <span class="count">{profiles.length} 个应用映射</span>
         <button class="btn-primary" onclick={startNewProfile}>+ 新增映射</button>
+      </div>
+
+      <div class="default-profile-card">
+        <div class="button-info">
+          <span class="btn-label">默认映射</span>
+          <span class="btn-id">
+            {defaultButtons.length > 0
+              ? `${defaultButtons.length} 个按钮`
+              : "未配置（回退使用「默认按钮」组）"}
+          </span>
+        </div>
+        <div class="button-actions">
+          <button class="btn-edit" onclick={startEditDefault}>编辑</button>
+        </div>
       </div>
 
       <div class="button-list">
@@ -758,13 +861,22 @@
             </label>
 
             <div class="picker-section">
-              <div class="section-title">已选按钮（{profSelectedButtons.length}）</div>
+              <div class="section-title">
+                已选按钮（{profSelectedButtons.length}，可拖拽排序）
+              </div>
               {#if profSelectedButtons.length === 0}
                 <div class="picker-empty">尚未选择按钮</div>
               {:else}
                 <div class="picker-list">
                   {#each profSelectedButtons as b, i (b.id)}
-                    <div class="picker-row">
+                    <div
+                      class="picker-row"
+                      draggable="true"
+                      ondragstart={() => onDragStart(i)}
+                      ondragover={(e) => e.preventDefault()}
+                      ondrop={() => onDrop("prof", i)}
+                    >
+                      <span class="drag-handle" title="拖拽调整顺序">⠿</span>
                       <div class="picker-info">
                         <span class="p-label">{b.label}</span>
                         <span class="p-content">{b.content}</span>
@@ -797,6 +909,72 @@
             <div class="form-actions">
               <button class="btn-cancel" onclick={cancelProfileEdit}>取消</button>
               <button class="btn-primary" onclick={saveProfile}>保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if defEditing}
+      <div class="modal-overlay" onclick={cancelDefaultEdit} role="presentation">
+        <div class="modal-box modal-wide" onclick={(e) => e.stopPropagation()}>
+          <div class="edit-form">
+            <h3 class="modal-title">编辑默认映射</h3>
+            <p class="default-profile-desc">
+              未匹配任何已绑定应用时，悬浮窗使用以下按钮；留空则回退使用「默认按钮」组。
+            </p>
+            {#if defSaveError}
+              <div class="form-error">{defSaveError}</div>
+            {/if}
+            <div class="picker-section">
+              <div class="section-title">
+                已选按钮（{defSelectedButtons.length}，可拖拽排序）
+              </div>
+              {#if defSelectedButtons.length === 0}
+                <div class="picker-empty">尚未选择按钮</div>
+              {:else}
+                <div class="picker-list">
+                  {#each defSelectedButtons as b, i (b.id)}
+                    <div
+                      class="picker-row"
+                      draggable="true"
+                      ondragstart={() => onDragStart(i)}
+                      ondragover={(e) => e.preventDefault()}
+                      ondrop={() => onDrop("def", i)}
+                    >
+                      <span class="drag-handle" title="拖拽调整顺序">⠿</span>
+                      <div class="picker-info">
+                        <span class="p-label">{b.label}</span>
+                        <span class="p-content">{b.content}</span>
+                      </div>
+                      <button class="btn-delete" onclick={() => removeFromDef(i)}>移除</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="picker-section">
+              <div class="section-title">从现有按钮添加</div>
+              {#if candidateForDefault.length === 0}
+                <div class="picker-empty">没有可选按钮，请先在"默认按钮"或其他映射中创建</div>
+              {:else}
+                <div class="picker-list">
+                  {#each candidateForDefault as b (b.id)}
+                    <div class="picker-row">
+                      <div class="picker-info">
+                        <span class="p-label">{b.label}</span>
+                        <span class="p-content">{b.content}</span>
+                      </div>
+                      <button class="btn-edit" onclick={() => addToDef(b)}>添加</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <div class="form-actions">
+              <button class="btn-cancel" onclick={cancelDefaultEdit}>取消</button>
+              <button class="btn-primary" onclick={saveDefault}>保存</button>
             </div>
           </div>
         </div>
@@ -1285,6 +1463,40 @@
     font-size: 11px;
     color: #666;
     padding: 6px 0;
+  }
+
+  /* 默认映射卡片 */
+  .default-profile-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 12px;
+    margin-bottom: 8px;
+    background: rgba(122, 162, 247, 0.08);
+    border: 1px solid rgba(122, 162, 247, 0.25);
+    border-radius: 6px;
+  }
+  .default-profile-desc {
+    margin: 0 0 10px 0;
+    font-size: 11px;
+    color: #999;
+    line-height: 1.5;
+  }
+  /* 拖拽排序手柄 */
+  .drag-handle {
+    color: #777;
+    font-size: 14px;
+    cursor: grab;
+    user-select: none;
+    flex-shrink: 0;
+    padding: 0 2px;
+  }
+  .picker-row[draggable="true"] {
+    cursor: grab;
+  }
+  .picker-row[draggable="true"]:active {
+    cursor: grabbing;
   }
   .form-actions {
     display: flex;

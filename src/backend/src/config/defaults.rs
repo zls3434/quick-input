@@ -11,6 +11,7 @@ use super::model::{AppProfile, ButtonConfig, ConfigFile};
 /// 用户可手动编辑 `default.toml` 自定义。
 pub fn default_config() -> ConfigFile {
     ConfigFile {
+        default_buttons: vec![],
         overlay: None,
         shortcuts: None,
         buttons: vec![

@@ -186,12 +186,16 @@ impl OverlaySettings {
 /// 顶层配置文件
 ///
 /// 包含默认按钮列表与可选的按应用配置画像。
-/// 当焦点进程无匹配的 `AppProfile` 时，回退使用 `buttons` 默认列表。
+/// 当焦点进程无匹配的 `AppProfile` 时，回退顺序：`default_buttons`（默认映射，
+/// 若配置了非空按钮）→ `buttons` 默认列表。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ConfigFile {
     /// 默认配置的按钮列表（可选，默认为空）
     #[serde(default)]
     pub buttons: Vec<ButtonConfig>,
+    /// 默认映射的按钮列表：未匹配任何应用画像时使用（可选，空则回退 `buttons`）
+    #[serde(default)]
+    pub default_buttons: Vec<ButtonConfig>,
     /// 按应用配置画像列表（可选，默认为空）
     #[serde(default)]
     pub profiles: Vec<AppProfile>,
@@ -283,6 +287,36 @@ impl ConfigFile {
             }
         }
 
+        // 校验默认映射按钮 ID 唯一
+        let mut d_seen: Vec<&str> = Vec::new();
+        for btn in &self.default_buttons {
+            if btn.id.trim().is_empty() {
+                return Err(ValidationError {
+                    field: "default_buttons[].id".into(),
+                    message: "按钮 ID 不能为空".into(),
+                });
+            }
+            if btn.label.trim().is_empty() {
+                return Err(ValidationError {
+                    field: "default_buttons[].label".into(),
+                    message: format!("按钮 '{}' 的标签不能为空", btn.id),
+                });
+            }
+            if btn.content.trim().is_empty() {
+                return Err(ValidationError {
+                    field: "default_buttons[].content".into(),
+                    message: format!("按钮 '{}' 的内容不能为空", btn.id),
+                });
+            }
+            if d_seen.iter().any(|s| **s == btn.id) {
+                return Err(ValidationError {
+                    field: "default_buttons[].id".into(),
+                    message: format!("按钮 ID '{}' 重复", btn.id),
+                });
+            }
+            d_seen.push(&btn.id);
+        }
+
         // 校验悬浮窗设置
         if let Some(overlay) = &self.overlay {
             let layout = overlay.layout.trim();
@@ -315,13 +349,20 @@ impl ConfigFile {
             .map(|p| p.buttons.as_slice())
     }
 
-    /// 获取当前进程的按钮列表（优先匹配进程，无匹配回退默认）
+    /// 获取当前进程的按钮列表（优先匹配进程，无匹配回退默认映射/默认按钮）
     ///
     /// S103 兜底逻辑：调用 [`ConfigFile::get_buttons_for_process`] 优先按进程匹配；
-    /// 若匹配成功返回该进程的按钮集，否则回退到 `buttons` 默认列表。
+    /// 若匹配成功返回该进程的按钮集，否则回退顺序：
+    /// 1. `default_buttons`（默认映射，配置了非空按钮时）
+    /// 2. `buttons` 默认列表
     /// 返回切片引用，永不返回 `None`。
     pub fn get_buttons_current(&self, process_name: &str) -> &[ButtonConfig] {
-        self.get_buttons_for_process(process_name)
-            .unwrap_or(&self.buttons)
+        if let Some(btns) = self.get_buttons_for_process(process_name) {
+            return btns;
+        }
+        if !self.default_buttons.is_empty() {
+            return &self.default_buttons;
+        }
+        &self.buttons
     }
 }

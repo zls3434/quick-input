@@ -238,6 +238,32 @@ fn get_profiles(state: tauri::State<AppState>) -> Result<Vec<AppProfile>, String
     Ok(mgr.config().profiles.clone())
 }
 
+/// 获取默认映射的按钮列表（未匹配任何应用画像时使用；空表示回退默认按钮组）
+#[tauri::command]
+fn get_default_profile(state: tauri::State<AppState>) -> Result<Vec<ButtonConfig>, String> {
+    let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    Ok(mgr.config().default_buttons.clone())
+}
+
+/// 更新默认映射的按钮列表（保存顺序即悬浮窗按钮顺序）
+#[tauri::command]
+fn update_default_profile(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    buttons: Vec<ButtonConfig>,
+) -> Result<(), String> {
+    let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    let config = mgr.config_mut();
+    // 先在副本上修改并校验，校验通过后才应用到实际配置
+    let mut probe = config.clone();
+    probe.default_buttons = buttons;
+    probe.validate().map_err(|e| e.to_string())?;
+    config.default_buttons = probe.default_buttons;
+    mgr.save().map_err(|e| e.to_string())?;
+    app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 新增一个应用画像
 #[tauri::command]
 fn add_profile(
@@ -693,6 +719,8 @@ pub fn run() {
             update_button,
             delete_button,
             get_profiles,
+            get_default_profile,
+            update_default_profile,
             add_profile,
             list_window_processes,
             get_overlay_settings,

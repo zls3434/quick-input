@@ -44,6 +44,16 @@ label = "转达给"
 content = "这个问题我转达给{input}处理"
 comment = "模板示例：{input} 填人名（左键光标停在此处，右键模板输入）"
 
+# ===== 默认映射（可选）：未匹配任何应用画像时使用 =====
+# default_buttons 数组（可省略，省略/为空则回退使用上面的全局按钮组）。
+# 按钮顺序即悬浮窗显示顺序（设置界面支持拖拽排序）。
+# 与 [[profiles]] 内的按钮写法相同（含 {input} 模板与 comment）。
+# 示例：把 reply-ok 与 reply-tpl 按自定义顺序设为默认映射
+default_buttons = [
+  { id = "reply-tpl", label = "转达给", content = "这个问题我转达给{input}处理", comment = "默认映射里的模板按钮" },
+  { id = "reply-ok", label = "好的", content = "好的", comment = "简洁确认回复" },
+]
+
 # ===== 应用画像：按前台进程名匹配按钮组 =====
 # process_name 不区分大小写，匹配进程可执行文件名
 
