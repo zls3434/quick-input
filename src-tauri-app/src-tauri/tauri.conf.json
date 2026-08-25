@@ -38,6 +38,22 @@
         "decorations": false,
         "visible": false,
         "center": true
+      },
+      {
+        "label": "floater",
+        "title": "QuickInput 浮层",
+        "url": "/floater",
+        "width": 1,
+        "height": 1,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": {

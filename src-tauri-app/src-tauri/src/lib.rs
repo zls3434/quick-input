@@ -30,6 +30,7 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
 use tray::setup_tray;
 use window::apply_overlay_styles;
+use floater::{floater_action, floater_ready, hide_floater, show_floater};
 
 /// Tauri 应用状态
 struct AppState {
@@ -874,6 +875,10 @@ pub fn run() {
             set_shortcut,
             check_shortcut_available,
             reset_config_to_default,
+            show_floater,
+            hide_floater,
+            floater_ready,
+            floater_action,
         ])
         // 浮层页面加载完成后：先应用样式与几何，再显示窗口。
         // 窗口初始隐藏（tauri.conf.json visible:false）以避免 WebView2 内容未就绪时
@@ -906,6 +911,27 @@ pub fn run() {
                     // setup 未执行：推迟显示（setup 末尾检查此标志）
                     OVERLAY_SHOW_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
+            }
+            if payload.event() == PageLoadEvent::Finished && webview.label() == "floater" {
+                floater::set_floater_page_ready(webview);
+            }
+        })
+        .on_window_event(|window, event| {
+            use tauri::WindowEvent;
+            match window.label() {
+                "overlay" => {
+                    // 悬浮窗移动/缩放时隐藏浮层，避免浮层悬空错位
+                    if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+                        floater::hide_floater_quiet(window.app_handle());
+                    }
+                }
+                "floater" => {
+                    // 菜单浮层失去焦点（点击其他应用/桌面）→ 关闭
+                    if matches!(event, WindowEvent::Focused(false)) {
+                        floater::hide_floater_quiet(window.app_handle());
+                    }
+                }
+                _ => {}
             }
         })
         .setup(|app| {

@@ -4,6 +4,11 @@
 //! 内容渲染在独立透明窗口（floater）中，定位在悬浮窗外、屏幕工作区内，
 //! 彻底摆脱悬浮窗尺寸约束（WebView2 内容在窗口物理边界处裁剪）。
 
+use crate::window::get_overlay_window;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+
 /// 浮层窗口 label（与 tauri.conf.json 中的 label 一致）
 pub const FLOATER_WINDOW_LABEL: &str = "floater";
 
@@ -81,6 +86,227 @@ pub fn compute_floater_placement(
     let y_min = wat;
     let y_max = (wab - h).max(y_min);
     (x.clamp(x_min, x_max), y.clamp(y_min, y_max))
+}
+
+/// 菜单项（overlay 前端下发）
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct FloaterMenuItem {
+    pub id: String,
+    pub label: String,
+    pub disabled: bool,
+    pub hint: Option<String>,
+}
+
+/// 锚点矩形（overlay 前端上报，逻辑像素，getBoundingClientRect 值）
+#[derive(serde::Deserialize)]
+pub struct FloaterAnchor {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// 待定位数据（floater_ready 时消费）
+struct PendingPlacement {
+    anchor: (i32, i32, i32, i32),
+    work_area: (i32, i32, i32, i32),
+    kind: FloaterKind,
+}
+
+static PENDING: Mutex<Option<PendingPlacement>> = Mutex::new(None);
+static CURRENT_KIND: Mutex<Option<FloaterKind>> = Mutex::new(None);
+/// 浮层页面是否加载完成（页面未就绪时 show 事件缓存，加载后补发）
+static FLOATER_PAGE_READY: AtomicBool = AtomicBool::new(false);
+static PENDING_SHOW: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+/// 标记浮层页面加载完成并补发缓存的显示事件（on_page_load 调用）
+pub fn set_floater_page_ready(webview: &tauri::Webview) {
+    FLOATER_PAGE_READY.store(true, Ordering::SeqCst);
+    if let Ok(mut slot) = PENDING_SHOW.lock() {
+        if let Some(v) = slot.take() {
+            let _ = webview.emit("floater://show", v);
+        }
+    }
+}
+
+fn get_floater_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window(FLOATER_WINDOW_LABEL)
+}
+
+/// 获取悬浮窗所在显示器工作区（物理像素，排除任务栏）
+#[cfg(target_os = "windows")]
+fn overlay_monitor_work_area(overlay: &WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let handle = overlay.window_handle().ok()?;
+    let raw = handle.as_raw();
+    let hwnd = match raw {
+        RawWindowHandle::Win32(w) => HWND(w.hwnd.get() as *mut std::ffi::c_void),
+        _ => return None,
+    };
+    let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if mon.0.is_null() {
+        return None;
+    }
+    let mut info = MONITORINFO::default();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let ok = unsafe { GetMonitorInfoW(mon, &mut info) };
+    if ok.as_bool() {
+        Some((info.rcWork.left, info.rcWork.top, info.rcWork.right, info.rcWork.bottom))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn overlay_monitor_work_area(_overlay: &WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
+/// 设置浮层窗口鼠标穿透与不抢焦点（tooltip 用；menu 时清除）
+#[cfg(target_os = "windows")]
+pub fn set_floater_click_through(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
+    };
+
+    let window = get_floater_window(app).ok_or_else(|| "浮层窗口 (floater) 未找到".to_string())?;
+    let handle = window.window_handle().map_err(|e| e.to_string())?;
+    let raw = handle.as_raw();
+    let hwnd = match raw {
+        RawWindowHandle::Win32(w) => HWND(w.hwnd.get() as *mut std::ffi::c_void),
+        _ => return Ok(()),
+    };
+
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let transparent = WS_EX_TRANSPARENT.0 as isize;
+        let no_activate = WS_EX_NOACTIVATE.0 as isize;
+        let new_ex = if enabled {
+            ex | transparent | no_activate
+        } else {
+            ex & !(transparent | no_activate)
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_floater_click_through(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
+/// 显示浮层（两阶段）：记录锚点与内容 → 触发前端渲染与测量，
+/// 前端上报 `floater_ready` 后定位显示，避免定位闪烁。
+#[tauri::command]
+pub fn show_floater(
+    app: AppHandle,
+    kind: String,
+    text: Option<String>,
+    items: Option<Vec<FloaterMenuItem>>,
+    anchor: FloaterAnchor,
+) -> Result<(), String> {
+    let fkind = match kind.as_str() {
+        "tooltip" => FloaterKind::Tooltip,
+        "menu" => FloaterKind::Menu,
+        _ => return Err(format!("未知浮层类型: {kind}")),
+    };
+    let overlay = get_overlay_window(&app).ok_or_else(|| "悬浮窗 (overlay) 未找到".to_string())?;
+
+    // 锚点逻辑像素 → 物理像素（outer_position 为物理坐标）
+    let pos = overlay.outer_position().map_err(|e| e.to_string())?;
+    let scale = overlay.scale_factor().map_err(|e| e.to_string())?;
+    let (ox, oy) = (pos.x as f64, pos.y as f64);
+    let anchor_px = (
+        (ox + anchor.x * scale) as i32,
+        (oy + anchor.y * scale) as i32,
+        (ox + (anchor.x + anchor.w) * scale) as i32,
+        (oy + (anchor.y + anchor.h) * scale) as i32,
+    );
+
+    let work_area = overlay_monitor_work_area(&overlay).unwrap_or((0, 0, 1920, 1040));
+
+    {
+        let mut slot = PENDING.lock().map_err(|e| e.to_string())?;
+        *slot = Some(PendingPlacement { anchor: anchor_px, work_area, kind: fkind });
+    }
+    {
+        let mut slot = CURRENT_KIND.lock().map_err(|e| e.to_string())?;
+        *slot = Some(fkind);
+    }
+
+    let payload = serde_json::json!({ "kind": kind, "text": text, "items": items });
+    if FLOATER_PAGE_READY.load(Ordering::SeqCst) {
+        let floater = get_floater_window(&app).ok_or_else(|| "浮层窗口 (floater) 未找到".to_string())?;
+        floater.emit("floater://show", payload).map_err(|e| e.to_string())
+    } else {
+        // 页面未加载完成：缓存，on_page_load 补发
+        let mut slot = PENDING_SHOW.lock().map_err(|e| e.to_string())?;
+        *slot = Some(payload);
+        Ok(())
+    }
+}
+
+/// 浮层内容渲染完成：按上报尺寸定位并显示
+#[tauri::command]
+pub fn floater_ready(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    let pending = PENDING
+        .lock()
+        .map_err(|e| e.to_string())?
+        .take()
+        .ok_or_else(|| "无待定位的浮层数据".to_string())?;
+    let floater = get_floater_window(&app).ok_or_else(|| "浮层窗口 (floater) 未找到".to_string())?;
+
+    let scale = floater.scale_factor().map_err(|e| e.to_string())?;
+    let size = ((width * scale) as i32, (height * scale) as i32);
+    let (x, y) = compute_floater_placement(pending.anchor, size, pending.work_area, pending.kind);
+
+    floater.set_size(tauri::LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
+    floater.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+
+    // tooltip 鼠标穿透 + 不抢焦点；menu 可点击
+    set_floater_click_through(&app, pending.kind == FloaterKind::Tooltip)?;
+
+    floater.show().map_err(|e| e.to_string())?;
+
+    // 通知前端最终方向（tooltip 箭头翻转：浮层在锚点上方 → 箭头朝下指按钮）
+    let above = pending.kind == FloaterKind::Tooltip && y + size.1 <= pending.anchor.1;
+    let _ = floater.emit("floater://orient", serde_json::json!({ "above": above }));
+
+    Ok(())
+}
+
+/// 隐藏浮层（幂等）
+#[tauri::command]
+pub fn hide_floater(app: AppHandle) -> Result<(), String> {
+    if let Some(floater) = get_floater_window(&app) {
+        let _ = floater.hide();
+        let _ = floater.emit("floater://hide", ());
+    }
+    if let Ok(mut slot) = CURRENT_KIND.lock() {
+        *slot = None;
+    }
+    Ok(())
+}
+
+/// 事件回调用隐藏（忽略错误）
+pub fn hide_floater_quiet(app: &AppHandle) {
+    let _ = hide_floater(app.clone());
+}
+
+/// 菜单项点击：隐藏浮层并转发动作到悬浮窗前端
+#[tauri::command]
+pub fn floater_action(app: AppHandle, id: String) -> Result<(), String> {
+    hide_floater(app.clone())?;
+    app.emit_to("overlay", "floater-menu-action", serde_json::json!({ "id": id }))
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
