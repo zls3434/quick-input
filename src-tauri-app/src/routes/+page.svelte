@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import Tooltip from "$lib/Tooltip.svelte";
+  import { hideFloater, showMenu } from "$lib/floater";
 
   interface ButtonConfig {
     id: string;
@@ -245,10 +246,6 @@
     return content.replace(PLACEHOLDER, "");
   }
 
-  function removeCtxMenu() {
-    document.querySelector(".ctx-menu")?.remove();
-  }
-
   function removeTemplateDialog() {
     document.querySelector(".template-dialog")?.remove();
   }
@@ -271,7 +268,7 @@
 
   // 弹出模板输入对话框（原生 DOM）
   function showTemplateDialog(btn: ButtonConfig) {
-    removeCtxMenu();
+    hideFloater();
     removeTemplateDialog();
     const overlay = document.createElement("div");
     overlay.className = "template-dialog";
@@ -326,39 +323,30 @@
     });
   }
 
-  // 弹出右键自定义菜单（原生 DOM）
+  // 右键菜单去重标记：mousedown 与 contextmenu 兜底事件 200ms 内不重复弹
+  let lastMenuAt = 0;
+  let lastMenuBtnId: string | null = null;
+
+  // 弹出右键自定义菜单（外置浮层窗口，经 show_floater 渲染）
   function showCtxMenu(e: MouseEvent, btn: ButtonConfig) {
-    // 去重：同一按钮的菜单已在显示（右键按下 mousedown 已弹，松开后的
-    // contextmenu 兜底事件不重建，避免菜单闪烁/位移）
-    const existing = document.querySelector<HTMLElement>(".ctx-menu");
-    if (existing && existing.dataset.btnId === btn.id) return;
-    removeCtxMenu();
+    const now = Date.now();
+    if (lastMenuBtnId === btn.id && now - lastMenuAt < 200) return;
+    lastMenuAt = now;
+    lastMenuBtnId = btn.id;
+
     removeTemplateDialog();
-    const menu = document.createElement("div");
-    menu.className = "ctx-menu";
-    menu.dataset.btnId = btn.id;
-    const item = document.createElement("button");
-    item.className = "ctx-item";
     const isTpl = isTemplateBtn(btn);
-    item.textContent = isTpl ? "模板输入…" : "模板输入…（不可用）";
-    item.disabled = !isTpl;
-    item.addEventListener("click", () => {
-      if (isTpl) showTemplateDialog(btn);
-    });
-    menu.appendChild(item);
-    if (!isTpl) {
-      const hint = document.createElement("div");
-      hint.className = "ctx-hint";
-      hint.textContent = "该按钮内容不含 {input} 占位符";
-      menu.appendChild(hint);
-    }
-    // 定位：右键坐标（视口内），防溢出
-    const x = Math.min(e.clientX, window.innerWidth - 160);
-    const y = Math.min(e.clientY, window.innerHeight - 60);
-    menu.style.left = `${x}px`;
-    menu.style.top = `${y}px`;
-    menu.addEventListener("mousedown", (ev) => ev.stopPropagation());
-    document.body.appendChild(menu);
+    const items = [
+      {
+        id: btn.id,
+        label: isTpl ? "模板输入…" : "模板输入…（不可用）",
+        disabled: !isTpl,
+        hint: isTpl ? null : "该按钮内容不含 {input} 占位符",
+      },
+    ];
+    const el = (e.target as HTMLElement | null)?.closest?.(".button-item") as HTMLElement | null;
+    const rect = (el ?? (e.target as HTMLElement)).getBoundingClientRect();
+    showMenu(items, { x: rect.left, y: rect.top, w: rect.width, h: rect.height });
   }
 
   onMount(() => {
@@ -375,7 +363,7 @@
     // 例外：弹窗（模板输入）内的控件需要正常聚焦打字。
     const blockFocusSteal = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest?.(".ctx-menu, .template-dialog")) return;
+      if (target?.closest?.(".template-dialog")) return;
       e.preventDefault();
     };
     window.addEventListener("mousedown", blockFocusSteal, true);
@@ -387,9 +375,8 @@
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       const t = e.target as HTMLElement | null;
-      // 菜单/弹窗内右键：保持现状（部分输入设备松开右键时 contextmenu
-      // 的 target 为松开位置元素即菜单本身，若在此关闭会误关刚弹出的菜单）
-      if (t?.closest?.(".ctx-menu, .template-dialog")) return;
+      // 弹窗内右键：保持现状（不重复处理）
+      if (t?.closest?.(".template-dialog")) return;
       const el = t?.closest?.(".button-item");
       if (el) {
         const btn = buttons.find((b) => b.id === (el as HTMLElement).dataset.id);
@@ -398,8 +385,8 @@
           return;
         }
       }
-      // 非按钮区域右键：关闭菜单与弹窗
-      removeCtxMenu();
+      // 非按钮区域右键：关闭外置菜单与弹窗
+      hideFloater();
       removeTemplateDialog();
     };
     window.addEventListener("contextmenu", handleContextMenu, true);
@@ -410,7 +397,7 @@
     const handleRightDown = (e: MouseEvent) => {
       if (e.button !== 2) return;
       const t = e.target as HTMLElement | null;
-      if (t?.closest?.(".ctx-menu, .template-dialog")) return;
+      if (t?.closest?.(".template-dialog")) return;
       const el = t?.closest?.(".button-item");
       if (el) {
         const btn = buttons.find((b) => b.id === (el as HTMLElement).dataset.id);
@@ -419,12 +406,9 @@
     };
     window.addEventListener("mousedown", handleRightDown, true);
 
-    // 点击任意处关闭右键菜单（点击菜单内部除外——其 mousedown 已 stopPropagation）
-    const closeMenuOnClick = (e: MouseEvent) => {
-      const inMenu = (e.target as HTMLElement | null)?.closest?.(".ctx-menu, .template-dialog");
-      if (!inMenu) {
-        removeCtxMenu();
-      }
+    // 点击悬浮窗任意处关闭外置右键菜单（浮层为独立窗口，悬浮窗内点击均触发）
+    const closeMenuOnClick = () => {
+      hideFloater();
     };
     window.addEventListener("click", closeMenuOnClick);
 
@@ -432,6 +416,12 @@
     const unlisten = listen("ConfigSwitched", () => {
       loadButtons();
       loadLayout();
+    });
+
+    // 外置菜单动作转发：菜单项点击 → Rust 隐藏浮层 → 转发回悬浮窗执行
+    const unlistenMenuAction = listen<{ id: string }>("floater-menu-action", (e) => {
+      const btn = buttons.find((b) => b.id === e.payload.id);
+      if (btn && isTemplateBtn(btn)) showTemplateDialog(btn);
     });
 
     const win = getCurrentWebviewWindow();
@@ -520,7 +510,7 @@
       window.removeEventListener("contextmenu", handleContextMenu, true);
       window.removeEventListener("mousedown", handleRightDown, true);
       window.removeEventListener("click", closeMenuOnClick);
-      removeCtxMenu();
+      hideFloater();
       removeTemplateDialog();
       unlisten.then((fn) => fn());
       unlistenMoved.then((fn) => fn());
@@ -655,7 +645,7 @@
       {/each}
     </div>
 
-    <!-- 右键自定义菜单与模板弹窗由原生 JS 动态创建（见 showCtxMenu/showTemplateDialog） -->
+    <!-- 模板输入弹窗由原生 JS 动态创建（见 showTemplateDialog）；右键菜单已外置浮层窗口 -->
     {/if}
 
   <!-- 缩放手柄视觉指示器（右下角） -->
@@ -792,43 +782,6 @@
     border-radius: 3px;
     padding: 0 3px;
     vertical-align: 1px;
-  }
-
-  /* 右键自定义菜单（原生 DOM 动态创建，须用 :global 使其样式生效——
-     Svelte scoped CSS 只作用于模板内静态元素，动态元素匹配不到） */
-  :global(.ctx-menu) {
-    position: fixed;
-    z-index: 1000;
-    min-width: 150px;
-    background: rgba(40, 40, 44, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    padding: 4px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-  }
-  :global(.ctx-item) {
-    display: block;
-    width: 100%;
-    padding: 7px 10px;
-    background: none;
-    border: none;
-    border-radius: 5px;
-    color: #e0e0e0;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-  }
-  :global(.ctx-item:hover:not(.disabled)) {
-    background: rgba(122, 162, 247, 0.18);
-  }
-  :global(.ctx-item.disabled) {
-    color: #777;
-    cursor: default;
-  }
-  :global(.ctx-hint) {
-    padding: 4px 10px 6px;
-    font-size: 10px;
-    color: #888;
   }
 
   /* 模板输入弹窗（原生 DOM 动态创建，同样须 :global） */
