@@ -75,20 +75,45 @@ fn focus_debug(state: tauri::State<AppState>) -> Result<String, String> {
 ///
 /// cursor_back：注入完成后发送 N 个左方向键（模板按钮左键输出时占位符
 /// 位置留空，光标需回退到占位符处，如 git commit -m "" 光标在引号中间）
+///
+/// mode：注入模式。"paste"（默认，剪贴板粘贴）或 "keystroke"（扫描码
+/// 按键模拟，面向老游戏——DirectInput/自绘输入框不响应粘贴与 Unicode 注入）
 #[tauri::command]
-async fn inject_text(text: String, cursor_back: Option<u32>) -> Result<(), String> {
+async fn inject_text(
+    text: String,
+    cursor_back: Option<u32>,
+    mode: Option<String>,
+) -> Result<(), String> {
     let injector = PlatformInjector::new();
-    tauri::async_runtime::spawn_blocking(move || injector.inject_text_ext(&text, cursor_back.unwrap_or(0)))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    let mode = mode.unwrap_or_else(|| "paste".to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        injector.inject_text_mode(&text, cursor_back.unwrap_or(0), &mode)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// 获取当前前台进程生效的注入模式（paste / keystroke）
+///
+/// 供悬浮窗前端在点击按钮时随按钮一起取用：命中画像用画像模式，
+/// 否则用 default_inject_mode，缺省 paste。
+#[tauri::command]
+fn get_current_inject_mode(state: tauri::State<AppState>) -> Result<String, String> {
+    let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    let process = state.current_process.lock().map_err(|e| e.to_string())?;
+    Ok(mgr.config().inject_mode_for_process(&process).to_string())
 }
 
 /// 向当前焦点输入框发送回车键（长按输入后回车交互）
+///
+/// mode 跟随前台应用的注入模式：keystroke（兼容模式）发真实扫描码，
+/// paste/缺省发虚拟键（现代应用通用）。
 #[tauri::command]
-async fn inject_enter() -> Result<(), String> {
+async fn inject_enter(mode: Option<String>) -> Result<(), String> {
     let injector = PlatformInjector::new();
-    tauri::async_runtime::spawn_blocking(move || injector.inject_enter())
+    let mode = mode.unwrap_or_else(|| "paste".to_string());
+    tauri::async_runtime::spawn_blocking(move || injector.inject_enter_mode(&mode))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
@@ -238,27 +263,41 @@ fn get_profiles(state: tauri::State<AppState>) -> Result<Vec<AppProfile>, String
     Ok(mgr.config().profiles.clone())
 }
 
-/// 获取默认映射的按钮列表（未匹配任何应用画像时使用；空表示回退默认按钮组）
-#[tauri::command]
-fn get_default_profile(state: tauri::State<AppState>) -> Result<Vec<ButtonConfig>, String> {
-    let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
-    Ok(mgr.config().default_buttons.clone())
+/// 默认映射数据（按钮列表 + 注入模式），供设置窗口编辑回显
+#[derive(serde::Serialize)]
+struct DefaultProfilePayload {
+    buttons: Vec<ButtonConfig>,
+    /// 生效注入模式（None = 默认 paste，未显式配置）
+    inject_mode: Option<String>,
 }
 
-/// 更新默认映射的按钮列表（保存顺序即悬浮窗按钮顺序）
+/// 获取默认映射（未匹配任何应用画像时使用；空按钮表示回退默认按钮组）
+#[tauri::command]
+fn get_default_profile(state: tauri::State<AppState>) -> Result<DefaultProfilePayload, String> {
+    let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    Ok(DefaultProfilePayload {
+        buttons: mgr.config().default_buttons.clone(),
+        inject_mode: mgr.config().default_inject_mode.clone(),
+    })
+}
+
+/// 更新默认映射（按钮列表 + 注入模式，保存顺序即悬浮窗按钮顺序）
 #[tauri::command]
 fn update_default_profile(
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
     buttons: Vec<ButtonConfig>,
+    inject_mode: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
     // 先在副本上修改并校验，校验通过后才应用到实际配置
     let mut probe = config.clone();
     probe.default_buttons = buttons;
+    probe.default_inject_mode = inject_mode;
     probe.validate().map_err(|e| e.to_string())?;
     config.default_buttons = probe.default_buttons;
+    config.default_inject_mode = probe.default_inject_mode;
     mgr.save().map_err(|e| e.to_string())?;
     app.emit("ConfigSwitched", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -272,6 +311,7 @@ fn add_profile(
     process_name: String,
     buttons: Vec<ButtonConfig>,
     name: Option<String>,
+    inject_mode: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
@@ -288,6 +328,7 @@ fn add_profile(
         process_name,
         name,
         buttons,
+        inject_mode,
     });
     probe.validate().map_err(|e| e.to_string())?;
     config.profiles = probe.profiles;
@@ -304,6 +345,7 @@ fn update_profile(
     process_name: String,
     buttons: Vec<ButtonConfig>,
     name: Option<String>,
+    inject_mode: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
@@ -317,6 +359,7 @@ fn update_profile(
     profile.process_name = process_name;
     profile.name = name;
     profile.buttons = buttons;
+    profile.inject_mode = inject_mode;
     probe.validate().map_err(|e| e.to_string())?;
     config.profiles = probe.profiles;
     mgr.save().map_err(|e| e.to_string())?;
@@ -379,6 +422,27 @@ fn set_overlay_opacity(
     let config = mgr.config_mut();
     let overlay = config.overlay.get_or_insert_with(Default::default);
     overlay.opacity = Some(clamped);
+    let probe = config.clone();
+    probe.validate().map_err(|e| e.to_string())?;
+    config.overlay = probe.overlay;
+    mgr.save().map_err(|e| e.to_string())?;
+    Ok(clamped)
+}
+
+/// 设置按钮长按触发回车的时间阈值（毫秒，200~5000，保存并返回生效值）
+///
+/// 滑动条步进 100ms；数值输入框可传更精确值，统一夹取到合法范围。
+#[tauri::command]
+fn set_hold_threshold(state: tauri::State<AppState>, ms: u32) -> Result<u32, String> {
+    use quickinput_config::config::model::OverlaySettings;
+    let clamped = ms.clamp(
+        OverlaySettings::HOLD_THRESHOLD_MIN_MS,
+        OverlaySettings::HOLD_THRESHOLD_MAX_MS,
+    );
+    let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
+    let config = mgr.config_mut();
+    let overlay = config.overlay.get_or_insert_with(Default::default);
+    overlay.hold_threshold_ms = Some(clamped);
     let probe = config.clone();
     probe.validate().map_err(|e| e.to_string())?;
     config.overlay = probe.overlay;
@@ -705,6 +769,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             get_buttons,
+            get_current_inject_mode,
             focus_debug,
             inject_text,
             inject_enter,
@@ -726,6 +791,7 @@ pub fn run() {
             get_overlay_settings,
             set_overlay_layout,
             set_overlay_opacity,
+            set_hold_threshold,
             set_overlay_always_on_top,
             save_overlay_geometry,
             reset_overlay_geometry_command,

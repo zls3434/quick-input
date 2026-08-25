@@ -22,6 +22,30 @@ Software Engineering Studios 将一个 AI 编码会话转变为一间完整的�
 
 > 存在针对 React、Vue、Angular、Node.js、Python、Java、Go 的技术栈专家 Agent。请使用与项目匹配的集合。
 
+## 构建产物约定
+
+- 桌面端打包统一使用 `npm run tauri:build`（在 `src-tauri-app/` 下执行）
+- 打包完成后自动执行 `scripts/copy-exe.mjs`：把 `src-tauri-app/src-tauri/target/release/quickinput.exe` 复制为项目根目录 `QuickInput.exe`（绿色版单文件，供本地实测）
+- 若根目录 `QuickInput.exe` 仍在运行（上次测试未退出）：脚本自动结束该进程 → 复制新版 → 自动重新启动新版，无需手动关闭
+- 根目录 `QuickInput.exe` 已在 `.gitignore` 排除，仅供测试，禁止提交到版本控制
+- 官方安装包产物在 `src-tauri-app/src-tauri/target/release/bundle/` 下（NSIS `.exe` 与 MSI `.msi`）
+
+## 版本号规则
+
+语义化版本 `主版本.次版本.修订号`（如 0.8.12），三处同步维护，禁止只改其一：
+- `src-tauri-app/package.json` 的 `version`
+- `src-tauri-app/src-tauri/tauri.conf.json` 的 `version`
+- `src-tauri-app/src-tauri/Cargo.toml` 的 `version`（`Cargo.lock` 构建时自动同步）
+
+递增规则：
+- **每次提交：修订号（末位）+1**（缺陷修复、小调整、UI 微调等常规改动）
+- **重大功能更新：次版本号（中位）+1，修订号归零**（新增成体系的功能模块，如注入引擎新模式、新配置页面）
+- **主版本号（首位）仅人为确认后递增**：Agent 不得自行递增主版本号，仅在用户明确要求时修改；递增后次版本与修订号归零
+
+执行约定：
+- 提交前若本次改动未升版本号，Agent 应主动提醒并按上述规则递增后一并提交
+- 版本号变更纳入同一次提交（不单独发版本号提交）
+
 ## 代码风格
 
 - 组件名 PascalCase，文件名 kebab-case

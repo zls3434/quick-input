@@ -13,6 +13,24 @@ impl std::fmt::Display for ValidationError {
     }
 }
 
+/// 注入模式：剪贴板粘贴（默认，绕过输入法，适合现代应用）
+pub const INJECT_MODE_PASTE: &str = "paste";
+/// 注入模式：按键模拟（真实扫描码，适合老游戏/DirectInput/自绘输入框）
+pub const INJECT_MODE_KEYSTROKE: &str = "keystroke";
+
+/// 校验注入模式取值合法（None 视为默认 paste）
+fn validate_inject_mode(field: &str, value: &Option<String>) -> Result<(), ValidationError> {
+    if let Some(m) = value {
+        if m != INJECT_MODE_PASTE && m != INJECT_MODE_KEYSTROKE {
+            return Err(ValidationError {
+                field: field.into(),
+                message: format!("注入模式 '{m}' 无效（应为 paste 或 keystroke）"),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// 单个快捷按钮配置
 ///
 /// 每个按钮包含：唯一标识 `id`、显示标签 `label`、待输入内容 `content`、
@@ -43,6 +61,22 @@ pub struct AppProfile {
     /// 该进程下的快捷按钮列表（必填，但可空）
     #[serde(default)]
     pub buttons: Vec<ButtonConfig>,
+    /// 注入模式（可选）："paste"（默认）或 "keystroke"（老游戏按键模拟）。
+    /// 老游戏（DirectInput/自绘输入框）不响应剪贴板粘贴与 Unicode 注入，
+    /// 需用真实扫描码按键模拟。缺失时默认 paste。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject_mode: Option<String>,
+}
+
+impl AppProfile {
+    /// 生效的注入模式（未配置视为 paste）
+    pub fn effective_inject_mode(&self) -> &'static str {
+        if self.inject_mode.as_deref() == Some(INJECT_MODE_KEYSTROKE) {
+            INJECT_MODE_KEYSTROKE
+        } else {
+            INJECT_MODE_PASTE
+        }
+    }
 }
 
 /// 快捷键配置
@@ -101,6 +135,9 @@ pub struct OverlaySettings {
     pub opacity: Option<u8>,
     /// 悬浮窗是否置顶（None = 置顶）
     pub always_on_top: Option<bool>,
+    /// 按钮长按触发回车的阈值（毫秒，200~5000，None = 默认 1000）。
+    /// 按住超过该时长补发回车；范围内松开仅输入不回车。
+    pub hold_threshold_ms: Option<u32>,
 }
 
 impl OverlaySettings {
@@ -131,6 +168,20 @@ impl OverlaySettings {
     /// 生效置顶状态（None 视为置顶，保持既有行为）
     pub fn effective_always_on_top(&self) -> bool {
         self.always_on_top.unwrap_or(true)
+    }
+
+    /// 长按触发阈值下限（毫秒）
+    pub const HOLD_THRESHOLD_MIN_MS: u32 = 200;
+    /// 长按触发阈值上限（毫秒）
+    pub const HOLD_THRESHOLD_MAX_MS: u32 = 5000;
+    /// 长按触发阈值默认值（毫秒）
+    pub const HOLD_THRESHOLD_DEFAULT_MS: u32 = 1000;
+
+    /// 生效的长按触发阈值（毫秒）：缺省 1000，夹取 200~5000
+    pub fn effective_hold_threshold_ms(&self) -> u32 {
+        self.hold_threshold_ms
+            .unwrap_or(Self::HOLD_THRESHOLD_DEFAULT_MS)
+            .clamp(Self::HOLD_THRESHOLD_MIN_MS, Self::HOLD_THRESHOLD_MAX_MS)
     }
 
     /// 读取指定布局的记忆位置
@@ -199,6 +250,10 @@ pub struct ConfigFile {
     /// 按应用配置画像列表（可选，默认为空）
     #[serde(default)]
     pub profiles: Vec<AppProfile>,
+    /// 默认注入模式（可选）：无匹配画像时使用（管 default_buttons/buttons 场景）。
+    /// 命中画像时以画像自身的 inject_mode 为准，不继承此值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_inject_mode: Option<String>,
     /// 悬浮窗设置（可选）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<OverlaySettings>,
@@ -268,6 +323,11 @@ impl ConfigFile {
             }
             seen_profiles.push(&profile.process_name);
 
+            validate_inject_mode(
+                &format!("profiles[{}].inject_mode", profile.process_name),
+                &profile.inject_mode,
+            )?;
+
             // 校验画像内按钮 ID 唯一
             let mut p_seen: Vec<&str> = Vec::new();
             for btn in &profile.buttons {
@@ -317,6 +377,9 @@ impl ConfigFile {
             d_seen.push(&btn.id);
         }
 
+        // 校验默认注入模式
+        validate_inject_mode("default_inject_mode", &self.default_inject_mode)?;
+
         // 校验悬浮窗设置
         if let Some(overlay) = &self.overlay {
             let layout = overlay.layout.trim();
@@ -328,6 +391,20 @@ impl ConfigFile {
                     field: "overlay.layout".into(),
                     message: format!("悬浮窗布局 '{layout}' 无效（应为 vertical 或 horizontal）"),
                 });
+            }
+            if let Some(ms) = overlay.hold_threshold_ms {
+                if !(OverlaySettings::HOLD_THRESHOLD_MIN_MS..=OverlaySettings::HOLD_THRESHOLD_MAX_MS)
+                    .contains(&ms)
+                {
+                    return Err(ValidationError {
+                        field: "overlay.hold_threshold_ms".into(),
+                        message: format!(
+                            "长按触发时间 {ms}ms 超出范围（{}~{}ms）",
+                            OverlaySettings::HOLD_THRESHOLD_MIN_MS,
+                            OverlaySettings::HOLD_THRESHOLD_MAX_MS
+                        ),
+                    });
+                }
             }
         }
 
@@ -364,5 +441,24 @@ impl ConfigFile {
             return &self.default_buttons;
         }
         &self.buttons
+    }
+
+    /// 查询当前进程生效的注入模式（与 get_buttons_current 同一匹配/回退逻辑）
+    ///
+    /// - 命中画像：返回画像自身的 `inject_mode`（未配置视为 paste）
+    /// - 未命中：返回 `default_inject_mode`（未配置视为 paste）
+    pub fn inject_mode_for_process(&self, process_name: &str) -> &'static str {
+        if let Some(p) = self
+            .profiles
+            .iter()
+            .find(|p| p.process_name.eq_ignore_ascii_case(process_name))
+        {
+            return p.effective_inject_mode();
+        }
+        if self.default_inject_mode.as_deref() == Some(INJECT_MODE_KEYSTROKE) {
+            INJECT_MODE_KEYSTROKE
+        } else {
+            INJECT_MODE_PASTE
+        }
     }
 }

@@ -29,6 +29,9 @@
   let buttons = $state<ButtonConfig[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  // 当前前台进程生效的注入模式：paste（剪贴板粘贴）/ keystroke（按键模拟）
+  // 随按钮列表一起刷新（ConfigSwitched / 启动时），点击按钮时传给 inject_text
+  let injectMode = $state<"paste" | "keystroke">("paste");
   let injectingId = $state<string | null>(null);
   let lastError = $state<string | null>(null);
   // 悬浮窗布局：vertical（竖向）| horizontal（横向）
@@ -111,6 +114,11 @@
     error = null;
     try {
       buttons = await invoke<ButtonConfig[]>("get_buttons");
+      // 注入模式与按钮列表同源（同一配置匹配逻辑），一并刷新
+      injectMode = await invoke<"paste" | "keystroke">("get_current_inject_mode");
+      // 长按触发阈值（配置管理可调，200~5000ms，缺省 1000）
+      const s = await invoke<{ hold_threshold_ms: number | null }>("get_overlay_settings");
+      holdThresholdMs = Math.min(5000, Math.max(200, s.hold_threshold_ms ?? 1000));
     } catch (e) {
       error = `加载按钮失败: ${e}`;
       console.error(e);
@@ -121,13 +129,14 @@
     }
   }
 
-  // ---- 按钮交互：单击输入，长按（>2s）输入后回车 ----
-  // 按下（mousedown）即开始注入文本，同时启动 2 秒定时器：
-  // - 2 秒内松开：仅输入，不回车（单击）
-  // - 按住超过 2 秒：注入完成后自动补发回车（长按执行）
+  // ---- 按钮交互：单击输入，长按超过阈值输入后回车 ----
+  // 按下（mousedown）即开始注入文本，同时启动定时器：
+  // - 阈值内松开：仅输入，不回车（单击）
+  // - 按住超过阈值：注入完成后自动补发回车（长按执行）
   // 回车任务排队在文本注入之后，注入慢也不会被回车截断
-  // （注入本身为 SendInput 批量注入，毫秒级完成，远快于 2 秒阈值）。
-  const HOLD_MS = 2000;
+  // （注入本身为 SendInput 批量注入，毫秒级完成，远快于触发阈值）。
+  // 阈值 holdThresholdMs 由配置管理设置（200~5000ms，默认 1000）。
+  let holdThresholdMs = $state(1000);
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let pressedId: string | null = null;
   let injectPromise: Promise<unknown> | null = null;
@@ -149,20 +158,20 @@
     const isTpl = isTemplateBtn(btn);
     const outText = isTpl ? removePlaceholder(btn.content) : btn.content;
     const cursorBack = isTpl ? charsAfterPlaceholder(btn.content) : 0;
-    injectPromise = invoke("inject_text", { text: outText, cursorBack }).catch((err: unknown): void => {
+    injectPromise = invoke("inject_text", { text: outText, cursorBack, mode: injectMode }).catch((err: unknown): void => {
       console.error(`注入失败 [${btn.label}]: ${err}`);
       lastError = `注入失败: ${err}`;
     });
-    // 2. 启动长按定时器：超过 2 秒触发回车（等文本注入完成，避免截断）
+    // 2. 启动长按定时器：超过阈值触发回车（等文本注入完成，避免截断）
     holdTimer = setTimeout(async () => {
       holdTimer = null;
       await injectPromise;
       try {
-        await invoke("inject_enter");
+        await invoke("inject_enter", { mode: injectMode });
       } catch (err) {
         console.error(`回车注入失败: ${err}`);
       }
-    }, HOLD_MS);
+    }, holdThresholdMs);
   }
 
   function onBtnUp() {
@@ -248,7 +257,7 @@
   async function injectText(text: string, label: string) {
     lastError = null;
     try {
-      await invoke("inject_text", { text });
+      await invoke("inject_text", { text, mode: injectMode });
     } catch (err) {
       console.error(`注入失败 [${label}]: ${err}`);
       lastError = `注入失败: ${err}`;

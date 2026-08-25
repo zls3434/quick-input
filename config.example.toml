@@ -16,12 +16,12 @@
 #         例：git commit -m "{input}" 左键输出 git commit -m ""（光标在引号中间）
 #   右键：弹出「模板输入」对话框，填写内容后合并注入完整命令
 #         例：填 first init → 注入 git commit -m "first init"
-#   长按（>2 秒）：输入后自动回车（同普通按钮）
+#   长按（默认 1 秒，可在设置「长按触发时间」调整）：输入后自动回车（同普通按钮）
 # 不含 {input} 的按钮为普通按钮：仅左键快捷输入（右键菜单项禁用）。
 #
 # ─── 交互速查 ──────────────────────────────────────────────
 #   左键        输入内容（模板按钮光标停在占位符处）
-#   长按 >2s    输入内容 + 回车（执行命令）
+#   长按超阈值  输入内容 + 回车（执行命令，阈值见 overlay.hold_threshold_ms）
 #   右键        模板按钮：弹出模板输入对话框
 # ───────────────────────────────────────────────────────────
 
@@ -48,6 +48,10 @@ comment = "模板示例：{input} 填人名（左键光标停在此处，右键�
 # default_buttons 数组（可省略，省略/为空则回退使用上面的全局按钮组）。
 # 按钮顺序即悬浮窗显示顺序（设置界面支持拖拽排序）。
 # 与 [[profiles]] 内的按钮写法相同（含 {input} 模板与 comment）。
+#
+# default_inject_mode（可选）：默认映射的注入模式，未匹配任何画像时生效。
+#   "paste"     = 剪贴板粘贴注入（默认；绕过输入法，适合现代应用）
+#   "keystroke" = 按键模拟注入（真实键盘扫描码，适合老游戏/DirectInput）
 # 示例：把 reply-ok 与 reply-tpl 按自定义顺序设为默认映射
 default_buttons = [
   { id = "reply-tpl", label = "转达给", content = "这个问题我转达给{input}处理", comment = "默认映射里的模板按钮" },
@@ -56,6 +60,17 @@ default_buttons = [
 
 # ===== 应用画像：按前台进程名匹配按钮组 =====
 # process_name 不区分大小写，匹配进程可执行文件名
+#
+# inject_mode（可选，画像级）：该应用的注入模式，优先于 default_inject_mode。
+#   "paste"     = 剪贴板粘贴（默认）
+#   "keystroke" = 按键模拟（老游戏：DirectInput 轮询/自绘输入框不认粘贴
+#                 与 Unicode 注入，需真实扫描码；中文等无键位字符仍走
+#                 Unicode 通道。游戏以管理员运行时 QuickInput 也需管理员）
+# 示例：为 2000 年前后的老游戏客户端配置按键模拟
+# [[profiles]]
+# process_name = "Droiyan Online.exe"
+# name = "红月"
+# inject_mode = "keystroke"
 
 [[profiles]]
 process_name = "WindowsTerminal.exe"
@@ -122,3 +137,5 @@ vertical_w = 300         # 窗口尺寸
 vertical_h = 400
 opacity = 85             # 不透明度 30-100（百分比）
 always_on_top = true     # 窗口置顶
+hold_threshold_ms = 1000 # 长按触发回车的时间（毫秒，200-5000，默认 1000）
+                         # 范围内松开仅输入不回车，超过后补发回车

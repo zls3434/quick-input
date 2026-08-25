@@ -1,6 +1,6 @@
 {
   "name": "src-tauri-app",
-  "version": "0.8.12",
+  "version": "0.9.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
-    "tauri:build": "tauri build --features custom-protocol"
+    "tauri:build": "tauri build --features custom-protocol && node scripts/copy-exe.mjs"
   },
   "license": "MIT",
   "dependencies": {

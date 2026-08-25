@@ -210,11 +210,36 @@ fn paste_text(text: &str) -> Result<(), InjectError> {
 ///
 /// 模板按钮左键输出占位符留空后，光标回退到占位符位置
 /// （如 git commit -m "" 输出后光标落在引号中间，可直接键入内容）。
-fn send_left_keys(n: u32) -> Result<(), InjectError> {
+/// 发送 N 个左方向键（光标回退）
+///
+/// - `scan_mode=false`：虚拟键注入（现代应用通用）
+/// - `scan_mode=true`：扫描码注入（老游戏 DirectInput/自绘输入框只认扫描码；
+///   方向键为扩展键，须带 KEYEVENTF_EXTENDEDKEY，否则被识别为小键盘 4）
+fn send_left_keys(n: u32, scan_mode: bool) -> Result<(), InjectError> {
     if n == 0 {
         return Ok(());
     }
-    let vk_input = |up: bool| INPUT {
+    let mut inputs: Vec<INPUT> = Vec::with_capacity((n as usize) * 2);
+    for _ in 0..n {
+        if scan_mode {
+            inputs.push(scancode_input_ext(SCAN_LEFT, false));
+            inputs.push(scancode_input_ext(SCAN_LEFT, true));
+        } else {
+            inputs.push(vk_left_input(false));
+            inputs.push(vk_left_input(true));
+        }
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(InjectError::Unknown("SendInput 方向键失败".into()));
+    }
+    Ok(())
+}
+
+/// 构造左方向键虚拟键事件（现代应用路径）
+#[inline]
+fn vk_left_input(up: bool) -> INPUT {
+    INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
@@ -225,17 +250,7 @@ fn send_left_keys(n: u32) -> Result<(), InjectError> {
                 dwExtraInfo: 0,
             },
         },
-    };
-    let mut inputs: Vec<INPUT> = Vec::with_capacity((n as usize) * 2);
-    for _ in 0..n {
-        inputs.push(vk_input(false));
-        inputs.push(vk_input(true));
     }
-    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-    if sent != inputs.len() as u32 {
-        return Err(InjectError::Unknown("SendInput 方向键失败".into()));
-    }
-    Ok(())
 }
 
 /// 构造单个 Unicode 字符的键盘事件
@@ -281,6 +296,227 @@ fn send_unicode_text(text: &str) -> Result<(), InjectError> {
     Ok(())
 }
 
+/// 构造扫描码键盘事件（KEYEVENTF_SCANCODE：走物理键盘输入路径）
+#[inline]
+fn scancode_input(scan: u16, up: bool) -> INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_SCANCODE;
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: scan,
+                dwFlags: if up {
+                    KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
+                } else {
+                    KEYEVENTF_SCANCODE
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+/// 左 Shift 扫描码（Set 1）
+const SCAN_LSHIFT: u16 = 0x2A;
+
+/// 主键盘 Enter 扫描码（Set 1）
+const SCAN_ENTER: u16 = 0x1C;
+
+/// 左方向键扫描码（Set 1，扩展键：需 KEYEVENTF_EXTENDEDKEY）
+const SCAN_LEFT: u16 = 0x4B;
+
+/// 构造扩展键扫描码键盘事件（方向键等：KEYEVENTF_SCANCODE | EXTENDEDKEY）
+///
+/// 不带 EXTENDEDKEY 时扫描码 0x4B 会被目标应用解释为小键盘 4。
+#[inline]
+fn scancode_input_ext(scan: u16, up: bool) -> INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_EXTENDEDKEY;
+    let mut i = scancode_input(scan, up);
+    unsafe {
+        i.Anonymous.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    i
+}
+
+/// 按键序列描述：一个字符对应的扫描码与修饰键需求
+#[derive(Debug, PartialEq)]
+struct KeyPlan {
+    scan: u16,
+    need_shift: bool,
+}
+
+/// 把单个字符解析为按键计划（当前键盘布局反查）
+///
+/// 返回 None 表示布局无对应键位（如中文、生僻符号）或需要
+/// Ctrl/Alt 组合（模拟会误触游戏快捷键）——调用方回退 Unicode 注入。
+fn plan_char(ch: u16, hkl: windows::Win32::UI::Input::KeyboardAndMouse::HKL) -> Option<KeyPlan> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyExW, VkKeyScanExW, MAPVK_VK_TO_VSC};
+    unsafe {
+        let vks = VkKeyScanExW(ch, hkl);
+        if vks == -1 {
+            return None;
+        }
+        // 高字节修饰键状态：bit0=Shift bit1=Ctrl bit2=Alt（取 0x07 全三位）
+        let state = ((vks >> 8) & 0x07) as u16;
+        if state & 0x06 != 0 {
+            // 需要 Ctrl/Alt 组合的字符拒绝模拟（会误触目标应用快捷键）
+            return None;
+        }
+        let vk = (vks & 0xFF) as u32;
+        let scan = MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, hkl) as u16;
+        if scan == 0 {
+            return None;
+        }
+        Some(KeyPlan {
+            scan,
+            need_shift: state & 0x01 != 0,
+        })
+    }
+}
+
+/// 为整段文本构造扫描码按键序列（纯函数，便于单测）
+///
+/// - Shift 域管理：进入大写/符号区前按下左 Shift，离开时释放，结尾统一释放
+/// - 无法映射的字符（中文等）回退 KEYEVENTF_UNICODE 逐字符
+fn build_keystroke_inputs(
+    text: &str,
+    hkl: windows::Win32::UI::Input::KeyboardAndMouse::HKL,
+) -> Vec<INPUT> {
+    let mut inputs: Vec<INPUT> = Vec::with_capacity(text.len() * 2 + 4);
+    let mut shift_down = false;
+    for ch in text.encode_utf16() {
+        match plan_char(ch, hkl) {
+            Some(plan) => {
+                if plan.need_shift && !shift_down {
+                    inputs.push(scancode_input(SCAN_LSHIFT, false));
+                    shift_down = true;
+                } else if !plan.need_shift && shift_down {
+                    inputs.push(scancode_input(SCAN_LSHIFT, true));
+                    shift_down = false;
+                }
+                inputs.push(scancode_input(plan.scan, false));
+                inputs.push(scancode_input(plan.scan, true));
+            }
+            None => {
+                // 离开 Shift 域后再注入 Unicode 字符，避免组合污染
+                if shift_down {
+                    inputs.push(scancode_input(SCAN_LSHIFT, true));
+                    shift_down = false;
+                }
+                inputs.push(unicode_input(ch, false));
+                inputs.push(unicode_input(ch, true));
+            }
+        }
+    }
+    if shift_down {
+        inputs.push(scancode_input(SCAN_LSHIFT, true));
+    }
+    inputs
+}
+
+/// 检测指定进程是否以管理员（提升）权限运行
+fn is_process_elevated(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    unsafe {
+        let Ok(hproc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut token = HANDLE::default();
+        let ok = OpenProcessToken(hproc, TOKEN_QUERY, &mut token).is_ok();
+        let _ = CloseHandle(hproc);
+        if !ok {
+            return false;
+        }
+        let mut elev = TOKEN_ELEVATION::default();
+        let mut ret = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elev as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut ret,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elev.TokenIsElevated != 0
+    }
+}
+
+/// 检测自身（QuickInput 进程）是否以管理员权限运行
+fn is_self_elevated() -> bool {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elev = TOKEN_ELEVATION::default();
+        let mut ret = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elev as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut ret,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elev.TokenIsElevated != 0
+    }
+}
+
+/// 按键模拟注入：把文本逐字符映射为真实键盘扫描码事件（KEYEVENTF_SCANCODE）
+///
+/// 老游戏（DirectInput 轮询 / 自绘输入框只处理 WM_KEYDOWN 的 VK 与扫描码 /
+/// 只认扫描码的客户端）既不响应剪贴板粘贴，也不认识 KEYEVENTF_UNICODE
+/// 产生的 VK_PACKET(0xE7)。此模式用当前键盘布局反查每个字符的虚拟键与
+/// Shift 状态，再以扫描码事件模拟物理键盘，走与真实打字完全相同的输入
+/// 路径。无法映射的字符（如中文）回退 Unicode 逐字符注入。
+///
+/// UIPI 保护：目标窗口以管理员运行而本程序不是时，SendInput 会被系统
+/// 静默丢弃——提前检测并返回明确错误，提示用户以管理员身份运行。
+fn send_keystroke_text(text: &str) -> Result<(), InjectError> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+
+    // UIPI 检测：前台窗口提升运行且自身未提升 → 直接报错（提示用户）
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if !hwnd.0.is_null() {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid != 0 && is_process_elevated(pid) && !is_self_elevated() {
+                return Err(InjectError::Unknown(
+                    "目标窗口以管理员身份运行，注入被系统拦截；请以管理员身份重启 QuickInput".into(),
+                ));
+            }
+        }
+    }
+
+    let inputs = unsafe { build_keystroke_inputs(text, GetKeyboardLayout(0)) };
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(InjectError::Unknown("SendInput 按键注入失败".into()));
+    }
+    Ok(())
+}
+
 impl Injector for WindowsInjector {
     fn inject_text(&self, text: &str) -> Result<(), InjectError> {
         self.inject_text_ext(text, 0)
@@ -303,11 +539,56 @@ impl Injector for WindowsInjector {
         //    cursor_back > 0 时追加 N 个 VK_LEFT（光标回退到占位符位置）
         let result = paste_text(text)
             .or_else(|_| send_unicode_text(text))
-            .and_then(|_| send_left_keys(cursor_back));
+            .and_then(|_| send_left_keys(cursor_back, false));
 
         // 4. 恢复修饰键
         modifiers.restore();
 
+        result
+    }
+
+    fn inject_text_mode(&self, text: &str, cursor_back: u32, mode: &str) -> Result<(), InjectError> {
+        if mode != "keystroke" {
+            // paste 及未知模式走默认链路（粘贴 → Unicode 回退）
+            return self.inject_text_ext(text, cursor_back);
+        }
+        // keystroke：扫描码按键模拟（老游戏）。不做粘贴（自绘输入框
+        // 不响应 Ctrl+V），不逐字符回退 Unicode（VK_PACKET 不被识别）。
+        let _guard = FocusGuard::new();
+        remember_target_foreground(unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            GetForegroundWindow().0 as isize
+        });
+        let modifiers = ModifierState::capture();
+        modifiers.release();
+        let result = send_keystroke_text(text).and_then(|_| send_left_keys(cursor_back, true));
+        modifiers.restore();
+        result
+    }
+
+    fn inject_enter_mode(&self, mode: &str) -> Result<(), InjectError> {
+        if mode != "keystroke" {
+            return self.inject_enter();
+        }
+        // keystroke：真实扫描码回车（老游戏只认扫描码，纯虚拟键被忽略）
+        let _guard = FocusGuard::new();
+        remember_target_foreground(unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            GetForegroundWindow().0 as isize
+        });
+        let modifiers = ModifierState::capture();
+        modifiers.release();
+        let inputs = [
+            scancode_input(SCAN_ENTER, false),
+            scancode_input(SCAN_ENTER, true),
+        ];
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        let result = if sent != inputs.len() as u32 {
+            Err(InjectError::Unknown("SendInput 回车注入失败（扫描码）".into()))
+        } else {
+            Ok(())
+        };
+        modifiers.restore();
         result
     }
 
@@ -483,6 +764,10 @@ fn check_foreground_process_openable() -> Result<(), InjectError> {
 mod tests {
     use super::*;
 
+    /// 真实 SendInput 测试的全局锁：并行注入 + FocusGuard 焦点线程操作
+    /// 会相互干扰（曾致测试进程堆损坏），必须串行执行
+    static SEND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // AC2-1/AC2-2/AC2-3: send_unicode_char 构造（纯函数验证）
     #[test]
     fn test_modifier_state_capture_no_panic() {
@@ -494,6 +779,7 @@ mod tests {
     // 注入不应 panic（结果取决于运行环境）
     #[test]
     fn test_windows_injector_does_not_panic() {
+        let _g = SEND_LOCK.lock().unwrap();
         let injector = WindowsInjector::new();
         let _ = injector.inject_text("hello");
     }
@@ -501,6 +787,7 @@ mod tests {
     // AC3-1: 多字节 Unicode 字符（中文）注入不 panic
     #[test]
     fn test_windows_injector_unicode_multibyte_does_not_panic() {
+        let _g = SEND_LOCK.lock().unwrap();
         let injector = WindowsInjector::new();
         // 中文、日文、特殊符号
         let _ = injector.inject_text("你好世界こんにちは😊");
@@ -510,6 +797,153 @@ mod tests {
     #[test]
     fn test_check_foreground_openable_no_panic() {
         let _ = check_foreground_process_openable();
+    }
+
+    // ===== 扫描码注入（keystroke 模式）单元测试 =====
+
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+
+    /// 美式布局下常见字符可映射为扫描码计划
+    #[test]
+    fn test_plan_char_ascii_mappable() {
+        let hkl = unsafe { GetKeyboardLayout(0) };
+        // 小写 a：无 Shift，扫描码 0x1E
+        assert_eq!(
+            plan_char('a' as u16, hkl),
+            Some(KeyPlan { scan: 0x1E, need_shift: false })
+        );
+        // 大写 A / 感叹号：需要 Shift
+        assert_eq!(
+            plan_char('A' as u16, hkl).map(|p| p.need_shift),
+            Some(true)
+        );
+        assert_eq!(
+            plan_char('!' as u16, hkl).map(|p| p.need_shift),
+            Some(true)
+        );
+    }
+
+    /// 键盘布局无键位的字符（中文）返回 None
+    #[test]
+    fn test_plan_char_chinese_unmappable() {
+        let hkl = unsafe { GetKeyboardLayout(0) };
+        assert_eq!(plan_char('中' as u16, hkl), None);
+    }
+
+    /// 小写文本：每字符恰好 down+up 两个事件，无 Shift
+    #[test]
+    fn test_build_keystroke_inputs_lowercase() {
+        let hkl = unsafe { GetKeyboardLayout(0) };
+        let inputs = build_keystroke_inputs("abc", hkl);
+        assert_eq!(inputs.len(), 6); // 3 字符 × (down + up)
+        // 全部为扫描码事件（wVk=0），无 Shift（0x2A）
+        assert!(inputs
+            .iter()
+            .all(|i| unsafe { i.Anonymous.ki }.wVk.0 == 0));
+        assert!(!inputs.iter().any(|i| unsafe { i.Anonymous.ki }.wScan == SCAN_LSHIFT));
+    }
+
+    /// 大写/符号混合：Shift 按下一次、结尾释放（域管理）
+    #[test]
+    fn test_build_keystroke_inputs_shift_domain() {
+        let hkl = unsafe { GetKeyboardLayout(0) };
+        let inputs = build_keystroke_inputs("aB!c", hkl);
+        // a:2 + [shift down] B:2 [shift? 仍需] !:2 [shift up] c:2
+        let shift_events = inputs
+            .iter()
+            .filter(|i| unsafe { i.Anonymous.ki }.wScan == SCAN_LSHIFT)
+            .count();
+        // 'B' 与 '!' 连续需要 Shift：down 1 次；'c' 前释放 1 次 = 2 个事件
+        assert_eq!(shift_events, 2);
+        // 第一个 Shift 事件必须是按下
+        let first = inputs
+            .iter()
+            .find(|i| unsafe { i.Anonymous.ki }.wScan == SCAN_LSHIFT)
+            .unwrap();
+        let flags = unsafe { first.Anonymous.ki }.dwFlags;
+        assert_eq!(flags.0 & 0x0002, 0); // 无 KEYUP → 按下
+    }
+
+    /// 全大写文本：结尾必须释放 Shift（不留按下态）
+    #[test]
+    fn test_build_keystroke_inputs_shift_released_at_end() {
+        let hkl = unsafe { GetKeyboardLayout(0) };
+        let inputs = build_keystroke_inputs("AB", hkl);
+        let last_shift = inputs
+            .iter()
+            .filter(|i| unsafe { i.Anonymous.ki }.wScan == SCAN_LSHIFT)
+            .last()
+            .expect("应存在 Shift 释放事件");
+        let flags = unsafe { last_shift.Anonymous.ki }.dwFlags;
+        assert_ne!(flags.0 & 0x0002, 0); // 含 KEYUP → 释放
+    }
+
+    /// 中英混合：中文回退 Unicode 注入（KEYEVENTF_UNICODE=0x0004）
+    #[test]
+    fn test_build_keystroke_inputs_chinese_fallback_unicode() {
+        let hkl = unsafe { GetKeyboardLayout(0) };
+        let inputs = build_keystroke_inputs("a中b", hkl);
+        let unicode_events = inputs
+            .iter()
+            .filter(|i| unsafe { i.Anonymous.ki }.dwFlags.0 & 0x0004 != 0)
+            .count();
+        assert_eq!(unicode_events, 2); // '中' 的 down + up
+    }
+
+    /// keystroke 模式注入不 panic（结果取决于运行环境）
+    #[test]
+    fn test_inject_text_mode_keystroke_no_panic() {
+        let _g = SEND_LOCK.lock().unwrap();
+        let injector = WindowsInjector::new();
+        let _ = injector.inject_text_mode("Hello123", 0, "keystroke");
+        let _ = injector.inject_text_mode("a中b", 0, "keystroke");
+    }
+
+    /// 未知模式回退默认链路
+    #[test]
+    fn test_inject_text_mode_unknown_falls_back() {
+        let _g = SEND_LOCK.lock().unwrap();
+        let injector = WindowsInjector::new();
+        let _ = injector.inject_text_mode("hi", 0, "whatever");
+    }
+
+    // ===== 回车/方向键扫描码注入（keystroke 模式长按回车）=====
+
+    /// 扩展键事件：扫描码正确且带 KEYEVENTF_EXTENDEDKEY（0x0001），
+    /// 否则方向键 0x4B 会被目标应用解释为小键盘 4
+    #[test]
+    fn test_scancode_input_ext_has_extended_flag() {
+        let down = scancode_input_ext(SCAN_LEFT, false);
+        let up = scancode_input_ext(SCAN_LEFT, true);
+        let fd = unsafe { down.Anonymous.ki }.dwFlags.0;
+        let fu = unsafe { up.Anonymous.ki }.dwFlags.0;
+        assert_eq!(unsafe { down.Anonymous.ki }.wScan, 0x4B);
+        assert_ne!(fd & 0x0001, 0, "down 须含 EXTENDEDKEY");
+        assert_ne!(fd & 0x0008, 0, "down 须含 SCANCODE");
+        assert_ne!(fu & 0x0001, 0, "up 须含 EXTENDEDKEY");
+        assert_ne!(fu & 0x0002, 0, "up 须含 KEYUP");
+        assert_ne!(fu & 0x0008, 0, "up 须含 SCANCODE");
+    }
+
+    /// 主键盘回车扫描码事件：0x1C，非扩展键（不得带 EXTENDEDKEY）
+    #[test]
+    fn test_scan_enter_not_extended() {
+        let down = scancode_input(SCAN_ENTER, false);
+        assert_eq!(unsafe { down.Anonymous.ki }.wScan, 0x1C);
+        assert_eq!(
+            unsafe { down.Anonymous.ki }.dwFlags.0 & 0x0001,
+            0,
+            "主键盘 Enter 不是扩展键"
+        );
+    }
+
+    /// 回车模式注入不 panic：keystroke 与 paste 路径均应可执行
+    #[test]
+    fn test_inject_enter_mode_no_panic() {
+        let _g = SEND_LOCK.lock().unwrap();
+        let injector = WindowsInjector::new();
+        let _ = injector.inject_enter_mode("keystroke");
+        let _ = injector.inject_enter_mode("paste");
     }
 }
 

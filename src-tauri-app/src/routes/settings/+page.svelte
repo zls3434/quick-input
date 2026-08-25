@@ -121,6 +121,13 @@
     process_name: string;
     name: string | null;
     buttons: ButtonConfig[];
+    inject_mode?: string | null;
+  }
+
+  // 默认映射载荷（get_default_profile 返回：按钮列表 + 注入模式）
+  interface DefaultProfilePayload {
+    buttons: ButtonConfig[];
+    inject_mode: string | null;
   }
 
   interface RunningProcess {
@@ -141,6 +148,14 @@
   let overlayTopmost = $state(true);
   let overlayOpacity = $state(85);
   let settingsSaving = $state(false);
+  // 长按触发时间（毫秒）：滑动条步进 100，输入框可精确到任意值
+  const HOLD_MIN = 200;
+  const HOLD_MAX = 5000;
+  const HOLD_STEP = 100;
+  const HOLD_DEFAULT = 1000;
+  let holdMs = $state(HOLD_DEFAULT);
+  // 输入框草稿：输入中不强制夹取，失焦/回车时校验保存
+  let holdInput = $state(String(HOLD_DEFAULT));
 
   // 快捷键配置：显示/隐藏悬浮窗
   let showOverlayShortcut = $state("CTRL+SHIFT+SPACE");
@@ -217,12 +232,17 @@
 
   async function loadOverlayLayout() {
     try {
-      const s = await invoke<{ layout: string; opacity: number | null; always_on_top: boolean | null }>(
-        "get_overlay_settings"
-      );
+      const s = await invoke<{
+        layout: string;
+        opacity: number | null;
+        always_on_top: boolean | null;
+        hold_threshold_ms: number | null;
+      }>("get_overlay_settings");
       overlayLayout = s.layout === "horizontal" ? "horizontal" : "vertical";
       overlayOpacity = s.opacity ?? 85;
       overlayTopmost = s.always_on_top ?? true;
+      holdMs = s.hold_threshold_ms ?? HOLD_DEFAULT;
+      holdInput = String(holdMs);
     } catch (e) {
       error = `读取悬浮窗设置失败: ${e}`;
     }
@@ -280,6 +300,43 @@
     }
   }
 
+  // 保存长按触发时间（后端夹取 200~5000，返回生效值）
+  async function saveHoldMs(ms: number) {
+    if (settingsSaving || holdMs === ms) return;
+    settingsSaving = true;
+    error = null;
+    try {
+      const applied = await invoke<number>("set_hold_threshold", { ms });
+      holdMs = applied;
+      holdInput = String(applied);
+    } catch (e) {
+      error = `设置长按触发时间失败: ${e}`;
+    } finally {
+      settingsSaving = false;
+    }
+  }
+
+  // 滑动条：值已是合法步进值，直接保存
+  function onHoldSlider(ev: Event) {
+    const v = Number((ev.currentTarget as HTMLInputElement).value);
+    if (Number.isFinite(v)) saveHoldMs(v);
+  }
+
+  // 输入框：失焦/回车时校验（非法回退当前生效值）
+  function onHoldInputCommit() {
+    const v = Number(holdInput);
+    if (Number.isFinite(v) && v >= HOLD_MIN && v <= HOLD_MAX) {
+      saveHoldMs(Math.round(v));
+    } else {
+      holdInput = String(holdMs);
+    }
+  }
+
+  // 滑动条与输入框联动：滑动时同步输入框草稿（change 事件时保存）
+  function syncHoldInput(ev: Event) {
+    holdInput = (ev.currentTarget as HTMLInputElement).value;
+  }
+
   async function switchLayout(target: "vertical" | "horizontal") {
     if (layoutSaving || overlayLayout === target) return;
     layoutSaving = true;
@@ -322,7 +379,9 @@
       error = `加载应用映射失败: ${e}`;
     }
     try {
-      defaultButtons = await invoke<ButtonConfig[]>("get_default_profile");
+      const payload = await invoke<DefaultProfilePayload>("get_default_profile");
+      defaultButtons = payload.buttons;
+      defCompat = payload.inject_mode === "keystroke";
     } catch (e) {
       console.error("加载默认映射失败", e);
     }
@@ -350,7 +409,11 @@
   async function saveDefault() {
     defSaveError = null;
     try {
-      await invoke("update_default_profile", { buttons: defSelectedButtons.map((b) => ({ ...b })) });
+      // 默认关闭存 null（未显式配置），开启兼容才持久化 keystroke
+      await invoke("update_default_profile", {
+        buttons: defSelectedButtons.map((b) => ({ ...b })),
+        injectMode: defCompat ? "keystroke" : null,
+      });
       defEditing = false;
       defaultButtons = defSelectedButtons.map((b) => ({ ...b }));
     } catch (e) {
@@ -363,6 +426,8 @@
   let profEditingOriginal = $state("");
   let profProcessName = $state("");
   let profName = $state("");
+  // 兼容模式开关：开启 = keystroke 按键模拟（老游戏），关闭 = paste 粘贴注入（现代应用）
+  let profCompat = $state(false);
   // 已选按钮（完整 ButtonConfig，保留原 id/label/content/comment）
   let profSelectedButtons = $state<ButtonConfig[]>([]);
   let profSaveError = $state<string | null>(null);
@@ -370,6 +435,8 @@
   let defaultButtons = $state<ButtonConfig[]>([]);
   let defEditing = $state(false);
   let defSelectedButtons = $state<ButtonConfig[]>([]);
+  // 默认映射兼容模式开关
+  let defCompat = $state(false);
   let defSaveError = $state<string | null>(null);
   // 运行进程列表（供绑定进程选择）
   let runningProcesses = $state<RunningProcess[]>([]);
@@ -442,6 +509,7 @@
     profEditingOriginal = "";
     profProcessName = "";
     profName = "";
+    profCompat = false;
     profSelectedButtons = [];
     profSaveError = null;
     loadRunningProcesses();
@@ -452,6 +520,7 @@
     profEditingOriginal = p.process_name;
     profProcessName = p.process_name;
     profName = p.name ?? "";
+    profCompat = p.inject_mode === "keystroke";
     profSelectedButtons = p.buttons.map((b) => ({ ...b }));
     profSaveError = null;
     loadRunningProcesses();
@@ -479,12 +548,14 @@
     }
     const btnList = profSelectedButtons.map((b) => ({ ...b }));
     const displayName = profName.trim() || null;
+    // 开启兼容才持久化 keystroke；关闭存 null（保持配置文件简洁）
+    const injectMode = profCompat ? "keystroke" : null;
 
     try {
       if (profEditingOriginal === "") {
-        await invoke("add_profile", { processName: name, buttons: btnList, name: displayName });
+        await invoke("add_profile", { processName: name, buttons: btnList, name: displayName, injectMode });
       } else {
-        await invoke("update_profile", { processName: name, buttons: btnList, name: displayName });
+        await invoke("update_profile", { processName: name, buttons: btnList, name: displayName, injectMode });
       }
       profEditing = false;
       await loadProfiles();
@@ -751,6 +822,9 @@
               <span class="btn-id">{p.name ? p.process_name : ""} {p.buttons.length} 个按钮</span>
             </div>
             <div class="button-actions">
+              {#if p.inject_mode === "keystroke"}
+                <span class="badge-keystroke" title="已开启兼容模式：使用按键模拟注入（老游戏）">兼容模式</span>
+              {/if}
               <button class="btn-edit" onclick={() => startEditProfile(p)}>编辑</button>
               <button class="btn-delete" onclick={() => deleteProfile(p.process_name)}>删除</button>
             </div>
@@ -807,6 +881,42 @@
                 {v === 100 ? "不透明" : `${v}%`}
               </button>
             {/each}
+          </div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-name">长按触发时间</div>
+          <div class="cfg-desc">
+            按住按钮超过该时长后补发回车；范围内松开仅输入不回车。滑动条步进 100ms，输入框可填精确毫秒值（200~5000）
+          </div>
+          <div class="hold-row">
+            <input
+              type="range"
+              class="hold-slider"
+              min={HOLD_MIN}
+              max={HOLD_MAX}
+              step={HOLD_STEP}
+              value={holdMs}
+              disabled={settingsSaving}
+              oninput={syncHoldInput}
+              onchange={onHoldSlider}
+              aria-label="长按触发时间（毫秒）"
+            />
+            <input
+              type="number"
+              class="hold-input"
+              min={HOLD_MIN}
+              max={HOLD_MAX}
+              step={HOLD_STEP}
+              bind:value={holdInput}
+              disabled={settingsSaving}
+              onblur={onHoldInputCommit}
+              onkeydown={(e) => {
+                if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+              }}
+              aria-label="长按触发时间（毫秒，可精确输入）"
+            />
+            <span class="hold-unit">ms</span>
           </div>
         </div>
 
@@ -956,6 +1066,29 @@
                 <button class="btn-secondary" onclick={loadRunningProcesses}>刷新</button>
               </div>
             </label>
+            <div class="compat-row">
+              <div class="compat-text">
+                <span class="compat-title">兼容模式</span>
+                <span class="compat-desc">老游戏、DirectInput 或点按钮无输入时开启</span>
+              </div>
+              <button
+                type="button"
+                class="toggle-switch"
+                role="switch"
+                aria-checked={profCompat}
+                aria-label="兼容模式"
+                onclick={() => (profCompat = !profCompat)}
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+            {#if profCompat}
+              <div class="mode-hint">
+                开启后改用真实键盘扫描码逐字输入（keystroke），适配老游戏
+                （DirectInput/自绘输入框）。中文等键盘无键位的字符仍走
+                Unicode 通道，若游戏内需输入中文请确认游戏自身输入法可用。
+              </div>
+            {/if}
 
             <div class="picker-section">
               <div class="section-title">
@@ -1020,6 +1153,28 @@
             </p>
             {#if defSaveError}
               <div class="form-error">{defSaveError}</div>
+            {/if}
+            <div class="compat-row">
+              <div class="compat-text">
+                <span class="compat-title">兼容模式</span>
+                <span class="compat-desc">作为未单独开启兼容的应用的默认注入方式</span>
+              </div>
+              <button
+                type="button"
+                class="toggle-switch"
+                role="switch"
+                aria-checked={defCompat}
+                aria-label="默认映射兼容模式"
+                onclick={() => (defCompat = !defCompat)}
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+            {#if defCompat}
+              <div class="mode-hint">
+                开启后未匹配应用映射的窗口将默认使用按键模拟注入
+                （keystroke）。仅建议大部分常用软件都是老程序时开启。
+              </div>
             {/if}
             <div class="picker-section">
               <div class="section-title">
@@ -1292,6 +1447,59 @@
     color: #7ca5ff;
   }
   .opacity-option:disabled { opacity: 0.5; cursor: default; }
+
+  /* 长按触发时间：滑动条 + 数字输入框 */
+  .hold-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .hold-slider {
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    appearance: none;
+    background: rgba(255,255,255,0.15);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  .hold-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #7ca5ff;
+    border: 1px solid #4a7cff;
+    cursor: pointer;
+  }
+  .hold-slider:focus-visible {
+    outline: 2px solid #7ca5ff;
+    outline-offset: 4px;
+  }
+  .hold-slider:disabled { opacity: 0.5; cursor: default; }
+  .hold-input {
+    width: 72px;
+    padding: 5px 6px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    color: #ccc;
+    text-align: right;
+  }
+  .hold-input:focus {
+    border-color: #4a7cff;
+    outline: none;
+  }
+  .hold-input:disabled { opacity: 0.5; }
+  .hold-unit {
+    font-size: 11px;
+    color: #888;
+    user-select: none;
+  }
 
   .shortcut-row {
     display: flex;
@@ -1575,6 +1783,87 @@
     font-size: 11px;
     color: #999;
     line-height: 1.5;
+  }
+  /* 兼容模式开关行（应用映射/默认映射弹窗内） */
+  .compat-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+  }
+  .compat-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .compat-title {
+    font-size: 12px;
+    color: #ccc;
+  }
+  .compat-desc {
+    font-size: 10px;
+    color: #888;
+    line-height: 1.4;
+  }
+  .toggle-switch {
+    position: relative;
+    flex-shrink: 0;
+    width: 38px;
+    height: 20px;
+    padding: 0;
+    border-radius: 10px;
+    background: #3a3f4a;
+    border: 1px solid #4a5060;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .toggle-switch[aria-checked="true"] {
+    background: rgba(122, 162, 247, 0.35);
+    border-color: rgba(122, 162, 247, 0.6);
+  }
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #aab3c5;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .toggle-switch[aria-checked="true"] .toggle-knob {
+    transform: translateX(18px);
+    background: #9ab8f7;
+  }
+  .toggle-switch:focus-visible {
+    outline: 2px solid #9ab8f7;
+    outline-offset: 2px;
+  }
+  /* 兼容模式（keystroke）说明块 */
+  .mode-hint {
+    margin: -2px 0 8px 0;
+    padding: 6px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #9ab8f7;
+    background: rgba(122, 162, 247, 0.08);
+    border: 1px solid rgba(122, 162, 247, 0.25);
+    border-radius: 4px;
+  }
+  /* 按键模拟徽标（映射列表行内提示） */
+  .badge-keystroke {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    font-size: 10px;
+    color: #9ab8f7;
+    border: 1px solid rgba(122, 162, 247, 0.45);
+    border-radius: 3px;
+    white-space: nowrap;
   }
   /* 拖拽排序手柄与拖拽视觉反馈 */
   .drag-handle {

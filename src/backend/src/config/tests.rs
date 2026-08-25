@@ -33,7 +33,8 @@ fn create_button_fixture_with_comment(
 fn create_default_config_fixture() -> ConfigFile {
 ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![
             create_button_fixture("git-status", "Git Status", "git status"),
@@ -49,7 +50,8 @@ buttons: vec![
             AppProfile {
                 process_name: "Code.exe".to_string(),
                 name: None,
-                buttons: vec![
+                inject_mode: None,
+buttons: vec![
                     create_button_fixture("fmt", "Format", "cargo fmt"),
                     create_button_fixture("build", "Build", "cargo build"),
                 ],
@@ -57,7 +59,8 @@ buttons: vec![
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
                 name: None,
-                buttons: vec![
+                inject_mode: None,
+buttons: vec![
                     create_button_fixture("kubectl-get-pods", "Get Pods", "kubectl get pods"),
                     create_button_fixture("docker-ps", "Docker PS", "docker ps"),
                 ],
@@ -284,14 +287,16 @@ fn test_empty_config_is_valid() {
 fn create_profile_config_fixture() -> ConfigFile {
 ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![create_button_fixture("default-1", "Default", "echo default")],
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".to_string(),
                 name: None,
-                buttons: vec![
+                inject_mode: None,
+buttons: vec![
                     create_button_fixture("fmt", "Format", "cargo fmt"),
                     create_button_fixture("build", "Build", "cargo build"),
                 ],
@@ -299,7 +304,8 @@ buttons: vec![create_button_fixture("default-1", "Default", "echo default")],
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
                 name: None,
-                buttons: vec![create_button_fixture("docker-ps", "Docker PS", "docker ps")],
+                inject_mode: None,
+buttons: vec![create_button_fixture("docker-ps", "Docker PS", "docker ps")],
             },
         ],
     }
@@ -472,7 +478,8 @@ fn test_validate_empty_config_ok() {
 fn test_validate_valid_buttons_ok() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![
             create_button_fixture("a", "A", "aaa"),
@@ -488,7 +495,8 @@ buttons: vec![
 fn test_validate_empty_id_fails() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![create_button_fixture("", "A", "aaa")],
         profiles: vec![],
@@ -502,7 +510,8 @@ buttons: vec![create_button_fixture("", "A", "aaa")],
 fn test_validate_empty_label_fails() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![create_button_fixture("a", " ", "aaa")],
         profiles: vec![],
@@ -516,7 +525,8 @@ buttons: vec![create_button_fixture("a", " ", "aaa")],
 fn test_validate_duplicate_id_fails() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![
             create_button_fixture("a", "A", "aaa"),
@@ -533,13 +543,15 @@ buttons: vec![
 fn test_validate_empty_process_name_fails() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "".into(),
             name: None,
-            buttons: vec![],
+            inject_mode: None,
+buttons: vec![],
         }],
     };
     let err = config.validate().unwrap_err();
@@ -551,19 +563,22 @@ buttons: vec![],
 fn test_validate_duplicate_process_name_case_insensitive_fails() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![],
         profiles: vec![
             AppProfile {
                 process_name: "Code.exe".into(),
                 name: None,
-                buttons: vec![],
+                inject_mode: None,
+buttons: vec![],
             },
             AppProfile {
                 process_name: "code.EXE".into(),
                 name: None,
-                buttons: vec![],
+                inject_mode: None,
+buttons: vec![],
             },
         ],
     };
@@ -576,13 +591,15 @@ buttons: vec![],
 fn test_validate_valid_profile_ok() {
     let config = ConfigFile {
                 default_buttons: vec![],
-                overlay: None,
+                default_inject_mode: None,
+overlay: None,
                 shortcuts: None,
 buttons: vec![],
         profiles: vec![AppProfile {
             process_name: "Code.exe".into(),
             name: None,
-            buttons: vec![create_button_fixture("p1", "P1", "p1c")],
+            inject_mode: None,
+buttons: vec![create_button_fixture("p1", "P1", "p1c")],
         }],
     };
     assert!(config.validate().is_ok());
@@ -664,6 +681,51 @@ fn test_overlay_invalid_layout_rejected() {
 }
 
 #[test]
+fn test_hold_threshold_defaults_and_clamp() {
+    use super::model::OverlaySettings;
+    // 缺省 1000ms
+    let ov = OverlaySettings::default();
+    assert_eq!(ov.effective_hold_threshold_ms(), 1000);
+
+    // 显式值原样生效
+    let mut ov2 = ov.clone();
+    ov2.hold_threshold_ms = Some(350);
+    assert_eq!(ov2.effective_hold_threshold_ms(), 350);
+    ov2.hold_threshold_ms = Some(5000);
+    assert_eq!(ov2.effective_hold_threshold_ms(), 5000);
+
+    // 越界值夹取到 200~5000
+    let mut ov3 = ov.clone();
+    ov3.hold_threshold_ms = Some(50);
+    assert_eq!(ov3.effective_hold_threshold_ms(), 200);
+    ov3.hold_threshold_ms = Some(99999);
+    assert_eq!(ov3.effective_hold_threshold_ms(), 5000);
+}
+
+#[test]
+fn test_hold_threshold_validation_range() {
+    // 合法边界值通过
+    for ms in [200, 1000, 5000] {
+        let mut config = create_default_config_fixture();
+        config.overlay = Some(super::model::OverlaySettings {
+            hold_threshold_ms: Some(ms),
+            ..Default::default()
+        });
+        assert!(config.validate().is_ok(), "ms={ms} 应合法");
+    }
+    // 越界值被校验拒绝
+    for ms in [199, 5001] {
+        let mut config = create_default_config_fixture();
+        config.overlay = Some(super::model::OverlaySettings {
+            hold_threshold_ms: Some(ms),
+            ..Default::default()
+        });
+        let err = config.validate().unwrap_err();
+        assert_eq!(err.field, "overlay.hold_threshold_ms", "ms={ms} 应拒绝");
+    }
+}
+
+#[test]
 fn test_overlay_settings_backward_compatible() {
     // 旧配置无 overlay 字段应正常解析
     let toml_str = r#"
@@ -674,5 +736,104 @@ content = "aa"
 "#;
     let config: ConfigFile = toml::from_str(toml_str).unwrap();
     assert!(config.overlay.is_none());
+}
+
+// ============================================================
+// 注入模式（inject_mode）
+// ============================================================
+
+// 命中画像时返回画像自身的模式
+#[test]
+fn test_inject_mode_matching_profile_wins() {
+    let mut config = create_profile_config_fixture();
+    config.profiles[0].inject_mode = Some("keystroke".to_string());
+    // 画像 keystroke 优先，即使 default_inject_mode 是 paste
+    config.default_inject_mode = Some("paste".to_string());
+    assert_eq!(config.inject_mode_for_process("Code.exe"), "keystroke");
+    // 未配置模式的画像默认 paste
+    assert_eq!(
+        config.inject_mode_for_process("WindowsTerminal.exe"),
+        "paste"
+    );
+}
+
+// 未命中画像时回退 default_inject_mode
+#[test]
+fn test_inject_mode_falls_back_to_default() {
+    let mut config = create_profile_config_fixture();
+    config.default_inject_mode = Some("keystroke".to_string());
+    assert_eq!(config.inject_mode_for_process("UnknownApp.exe"), "keystroke");
+}
+
+// 全未配置时默认 paste
+#[test]
+fn test_inject_mode_defaults_to_paste() {
+    let config = create_profile_config_fixture();
+    assert_eq!(config.inject_mode_for_process("Code.exe"), "paste");
+    assert_eq!(config.inject_mode_for_process("UnknownApp.exe"), "paste");
+}
+
+// 非法模式值校验失败
+#[test]
+fn test_inject_mode_invalid_value_rejected() {
+    let mut config = create_profile_config_fixture();
+    config.profiles[0].inject_mode = Some("telepathy".to_string());
+    let err = config.validate().unwrap_err();
+    assert!(err.message.contains("注入模式"), "非法模式应报错: {}", err.message);
+
+    let mut config2 = create_profile_config_fixture();
+    config2.default_inject_mode = Some("magic".to_string());
+    assert!(config2.validate().is_err());
+}
+
+// 合法模式值校验通过
+#[test]
+fn test_inject_mode_valid_values_accepted() {
+    let mut config = create_profile_config_fixture();
+    config.profiles[0].inject_mode = Some("keystroke".to_string());
+    config.profiles[1].inject_mode = Some("paste".to_string());
+    config.default_inject_mode = Some("keystroke".to_string());
+    assert!(config.validate().is_ok());
+}
+
+// 旧配置 TOML（无 inject_mode 字段）向后兼容
+#[test]
+fn test_inject_mode_backward_compatible_toml() {
+    let toml_str = r#"
+[[profiles]]
+process_name = "Game.exe"
+
+[[profiles.buttons]]
+id = "say"
+label = "Say"
+content = "hello"
+"#;
+    let config: ConfigFile = toml::from_str(toml_str).unwrap();
+    assert_eq!(config.profiles[0].inject_mode, None);
+    assert_eq!(config.inject_mode_for_process("Game.exe"), "paste");
+}
+
+// 新配置 TOML 携带 inject_mode 可正确解析
+#[test]
+fn test_inject_mode_toml_roundtrip() {
+    let toml_str = r#"
+default_inject_mode = "keystroke"
+
+[[profiles]]
+process_name = "Game.exe"
+inject_mode = "keystroke"
+
+[[profiles.buttons]]
+id = "say"
+label = "Say"
+content = "hello"
+"#;
+    let config: ConfigFile = toml::from_str(toml_str).unwrap();
+    assert_eq!(config.inject_mode_for_process("Game.exe"), "keystroke");
+    assert_eq!(config.inject_mode_for_process("Other.exe"), "keystroke");
+    // 序列化 round-trip 保持
+    let out = toml::to_string(&config).unwrap();
+    let back: ConfigFile = toml::from_str(&out).unwrap();
+    assert_eq!(back, config);
 }
 

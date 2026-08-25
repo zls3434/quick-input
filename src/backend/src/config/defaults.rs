@@ -12,6 +12,7 @@ use super::model::{AppProfile, ButtonConfig, ConfigFile};
 pub fn default_config() -> ConfigFile {
     ConfigFile {
         default_buttons: vec![],
+        default_inject_mode: None,
         overlay: None,
         shortcuts: None,
         buttons: vec![
@@ -80,6 +81,7 @@ pub fn default_config() -> ConfigFile {
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
                 name: Some("终端".to_string()),
+                inject_mode: None,
                 buttons: vec![
                     ButtonConfig {
                         id: "git-status".to_string(),
@@ -242,6 +244,7 @@ pub fn default_config() -> ConfigFile {
             AppProfile {
                 process_name: "Code.exe".to_string(),
                 name: Some("VS Code".to_string()),
+                inject_mode: None,
                 buttons: vec![
                     ButtonConfig {
                         id: "fmt".to_string(),

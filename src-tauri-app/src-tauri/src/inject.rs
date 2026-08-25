@@ -49,11 +49,26 @@ pub trait Injector {
     /// 注入文本后发送 N 个左方向键（光标回退）
     ///
     /// 模板按钮左键输出时占位符位置留空，光标需回退到占位符处
-    /// （如 `git commit -m ""` 输出后光标落在引号中间）。
+    /// （如 git commit -m "" 输出后光标落在引号中间）。
     /// 默认实现退化为普通注入（不支持平台忽略回退）。
     fn inject_text_ext(&self, text: &str, cursor_back: u32) -> Result<(), InjectError> {
         let _ = cursor_back;
         self.inject_text(text)
+    }
+
+    /// 按指定注入模式注入文本（paste=剪贴板粘贴 / keystroke=按键模拟）
+    ///
+    /// keystroke 模式面向老游戏（DirectInput/自绘输入框）：粘贴与
+    /// KEYEVENTF_UNICODE 均无效时，用真实扫描码模拟物理键盘。
+    /// 平台不支持的模式回退默认注入。
+    fn inject_text_mode(
+        &self,
+        text: &str,
+        cursor_back: u32,
+        mode: &str,
+    ) -> Result<(), InjectError> {
+        let _ = mode;
+        self.inject_text_ext(text, cursor_back)
     }
 
     /// 向当前焦点输入框发送回车键
@@ -62,6 +77,16 @@ pub trait Injector {
     /// 默认实现返回不支持，各平台可按需覆盖。
     fn inject_enter(&self) -> Result<(), InjectError> {
         Err(InjectError::Unknown("当前平台不支持回车注入".into()))
+    }
+
+    /// 按指定注入模式发送回车键（paste / keystroke）
+    ///
+    /// keystroke 模式面向老游戏：纯虚拟键（wVk）注入会被
+    /// DirectInput/自绘输入框忽略，须发真实扫描码。
+    /// 默认实现回退 inject_enter（平台不支持模式时行为不变）。
+    fn inject_enter_mode(&self, mode: &str) -> Result<(), InjectError> {
+        let _ = mode;
+        self.inject_enter()
     }
 }
 
