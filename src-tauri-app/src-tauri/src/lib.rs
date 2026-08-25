@@ -13,6 +13,7 @@ mod process_list;
 mod target_window;
 mod tray;
 mod window;
+mod floater;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
