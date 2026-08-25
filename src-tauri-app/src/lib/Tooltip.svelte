@@ -6,13 +6,18 @@
 
   let { text, children }: { text: string | null; children: import("svelte").Snippet } = $props();
   let wrap: HTMLSpanElement | undefined = $state();
-  // 防抖隐藏：hover 快速切换按钮时（旧按钮 leave → 新按钮 enter），
+  // 显示防抖：鼠标快速掠过按钮（停留不足阈值）不触发 tooltip，避免闪烁。
+  // 隐藏防抖：hover 快速切换按钮时（旧按钮 leave → 新按钮 enter），
   // 延迟 hide 让新按钮的 show 覆盖旧内容，避免 tooltip 闪断。
+  const SHOW_DELAY = 80;
+  const HIDE_DELAY = 120;
+  let showTimer: ReturnType<typeof setTimeout> | undefined = $state();
   let hideTimer: ReturnType<typeof setTimeout> | undefined = $state();
+  // 本次显示对应的浮层令牌：hide 时回传，防止旧按钮的延迟隐藏误杀新 tooltip
+  let token: number | undefined = $state();
 
   function show() {
     if (!text) return;
-    clearTimeout(hideTimer);
     const el = wrap;
     if (!el) return;
     // 锚点取整个按钮（.button-item）。wrap 是 display:contents 且为按钮的
@@ -22,20 +27,43 @@
       el.parentElement ??
       el;
     const r = btnEl.getBoundingClientRect();
-    showTooltip(text, { x: r.left, y: r.top, w: r.width, h: r.height });
+    token = showTooltip(text, { x: r.left, y: r.top, w: r.width, h: r.height });
+  }
+
+  function scheduleShow() {
+    if (!text) return;
+    clearTimeout(hideTimer);
+    clearTimeout(showTimer);
+    showTimer = setTimeout(show, SHOW_DELAY);
   }
 
   function scheduleHide() {
+    clearTimeout(showTimer);
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => hideTooltip(), 120);
+    hideTimer = setTimeout(() => {
+      hideTooltip(token);
+      token = undefined;
+    }, HIDE_DELAY);
   }
+
+  // 组件卸载（如按钮列表刷新）时：清理未触发的定时器；若浮层仍显示着
+  // 本按钮的 tooltip，主动关闭，避免残留浮层。令牌校验保证不会误杀
+  // 已由其他按钮接管的 tooltip。
+  $effect(() => {
+    return () => {
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
+      hideTooltip(token);
+      token = undefined;
+    };
+  });
 </script>
 
 <span
   bind:this={wrap}
   class="tooltip-wrap"
   role="presentation"
-  onmouseenter={show}
+  onmouseenter={scheduleShow}
   onmouseleave={scheduleHide}
 >
   {@render children()}

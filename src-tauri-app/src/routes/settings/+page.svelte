@@ -1294,6 +1294,21 @@
     overflow-y: auto;
     padding: 12px;
   }
+  /* 深色滚动条：WebView2 默认浅色滚动条在深色透明窗口上呈白色条状，
+     与圆角外透出的桌面背景形成"白角"观感，改为深色细滚动条 */
+  .content::-webkit-scrollbar {
+    width: 8px;
+  }
+  .content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+  }
+  .content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
 
   .error-banner {
     padding: 8px 12px;
