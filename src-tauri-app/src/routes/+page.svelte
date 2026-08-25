@@ -368,7 +368,7 @@
     };
     window.addEventListener("mousedown", blockFocusSteal, true);
 
-    // 屏蔽系统右键菜单；按钮右键（委托）弹自定义菜单（原生 DOM）。
+    // 屏蔽系统右键菜单；按钮右键（委托）弹外置自定义菜单（浮层窗口）。
     // 用 window capture 统一处理：实测 WebView2 中 contextmenu 事件 target
     // 是按钮内 tooltip-wrap 等子元素且不冒泡到按钮绑定，元素级绑定不可靠；
     // capture 必达，closest('.button-item') 反查按钮。
