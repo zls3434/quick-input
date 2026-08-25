@@ -598,7 +598,7 @@ fn validate_config(state: tauri::State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
-/// 导出配置到 TOML 文件（弹出保存对话框）
+/// 导出配置到 TOML 文件（弹出保存对话框，文件名带时间后缀便于区分版本）
 #[tauri::command]
 fn export_config(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
     // 序列化当前配置
@@ -606,12 +606,16 @@ fn export_config(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result
     let toml_str = toml::to_string(mgr.config()).map_err(|e| e.to_string())?;
     drop(mgr);
 
+    // 文件名带本地时间后缀（秒级精度），导出多次互不覆盖，便于区分版本
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let file_name = format!("quickinput-config-{stamp}.toml");
+
     // 弹出保存对话框（阻塞版本）
     let file_path = app
         .dialog()
         .file()
         .add_filter("TOML", &["toml"])
-        .set_file_name("quickinput-config.toml")
+        .set_file_name(&file_name)
         .blocking_save_file();
 
     let file_path = match file_path {
