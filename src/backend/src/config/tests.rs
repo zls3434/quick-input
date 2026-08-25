@@ -850,8 +850,8 @@ fn test_snap_edge_set_and_get_per_layout() {
     // 无记忆时返回 None
     assert_eq!(ov.snap_edge("notepad.exe", "horizontal"), None);
 
-    ov.set_snap_edge("notepad.exe", "horizontal", Some("win-bottom"));
-    ov.set_snap_edge("notepad.exe", "vertical", Some("screen-right"));
+    ov.set_snap_edge("notepad.exe", "horizontal", Some(("win-bottom", 0.5)));
+    ov.set_snap_edge("notepad.exe", "vertical", Some(("screen-right", 0.5)));
     assert_eq!(
         ov.snap_edge("notepad.exe", "horizontal"),
         Some("win-bottom".to_string())
@@ -868,14 +868,14 @@ fn test_snap_edge_set_and_get_per_layout() {
 #[test]
 fn test_snap_edge_case_insensitive() {
     let mut ov = OverlaySettings::default();
-    ov.set_snap_edge("Notepad.EXE", "horizontal", Some("win-left"));
+    ov.set_snap_edge("Notepad.EXE", "horizontal", Some(("win-left", 0.5)));
     // 读取用不同大小写仍命中
     assert_eq!(
         ov.snap_edge("notepad.exe", "horizontal"),
         Some("win-left".to_string())
     );
     // 写入复用已有键，不产生重复条目
-    ov.set_snap_edge("NOTEPAD.exe", "vertical", Some("win-right"));
+    ov.set_snap_edge("NOTEPAD.exe", "vertical", Some(("win-right", 0.5)));
     assert_eq!(ov.snap_memory.as_ref().unwrap().len(), 1);
     let entry = ov
         .snap_memory
@@ -893,8 +893,8 @@ fn test_snap_edge_case_insensitive() {
 #[test]
 fn test_snap_edge_clear_semantics() {
     let mut ov = OverlaySettings::default();
-    ov.set_snap_edge("a.exe", "horizontal", Some("screen-bottom"));
-    ov.set_snap_edge("a.exe", "vertical", Some("win-top"));
+    ov.set_snap_edge("a.exe", "horizontal", Some(("screen-bottom", 0.5)));
+    ov.set_snap_edge("a.exe", "vertical", Some(("win-top", 0.5)));
 
     // 清除横排：竖排保留
     ov.set_snap_edge("a.exe", "horizontal", None);
@@ -917,6 +917,8 @@ fn test_snap_edge_invalid_value_rejected() {
         SnapEdgeSettings {
             horizontal: Some("diagonal".to_string()),
             vertical: None,
+            horizontal_offset: None,
+            vertical_offset: None,
         },
     );
     config.overlay = Some(OverlaySettings {
@@ -939,7 +941,7 @@ fn test_snap_edge_all_valid_values_accepted() {
     for (i, edge) in OverlaySettings::SNAP_EDGES.iter().enumerate() {
         let layout = if i % 2 == 0 { "horizontal" } else { "vertical" };
         let process = format!("app{i}.exe");
-        ov.set_snap_edge(&process, layout, Some(edge));
+        ov.set_snap_edge(&process, layout, Some((edge, 0.5)));
     }
     let mut config = create_default_config_fixture();
     config.overlay = Some(ov);
@@ -950,9 +952,9 @@ fn test_snap_edge_all_valid_values_accepted() {
 #[test]
 fn test_snap_memory_toml_roundtrip() {
     let mut ov = OverlaySettings::default();
-    ov.set_snap_edge("notepad.exe", "horizontal", Some("win-bottom"));
-    ov.set_snap_edge("notepad.exe", "vertical", Some("screen-right"));
-    ov.set_snap_edge("game.exe", "vertical", Some("win-right"));
+    ov.set_snap_edge("notepad.exe", "horizontal", Some(("win-bottom", 0.5)));
+    ov.set_snap_edge("notepad.exe", "vertical", Some(("screen-right", 0.5)));
+    ov.set_snap_edge("game.exe", "vertical", Some(("win-right", 0.5)));
 
     let mut config = create_default_config_fixture();
     config.overlay = Some(ov);
@@ -978,5 +980,100 @@ layout = "horizontal"
     let ov = config.overlay.unwrap();
     assert!(ov.snap_memory.is_none());
     assert_eq!(ov.snap_edge("any.exe", "horizontal"), None);
+}
+
+// ============================================================
+// 沿边偏移比例（snap_*_offset）
+// ============================================================
+
+// 带偏移写入后，snap_edge_offset 返回边名 + 偏移；无偏移字段回退 0.5
+#[test]
+fn test_snap_edge_offset_roundtrip_and_fallback() {
+    let mut ov = OverlaySettings::default();
+    // 无记忆：None
+    assert_eq!(ov.snap_edge_offset("a.exe", "horizontal"), None);
+
+    // 写入偏移 0.3
+    ov.set_snap_edge("a.exe", "horizontal", Some(("win-bottom", 0.3)));
+    let (edge, offset) = ov.snap_edge_offset("a.exe", "horizontal").unwrap();
+    assert_eq!(edge, "win-bottom");
+    assert!((offset - 0.3).abs() < 1e-9);
+
+    // 竖排无记忆不受影响
+    assert_eq!(ov.snap_edge_offset("a.exe", "vertical"), None);
+}
+
+// 仅边名无偏移的旧配置：偏移回退 0.5（居中）
+#[test]
+fn test_snap_edge_offset_defaults_to_center_when_absent() {
+    let mut mem = std::collections::HashMap::new();
+    mem.insert(
+        "legacy.exe".to_string(),
+        SnapEdgeSettings {
+            horizontal: Some("win-bottom".to_string()),
+            vertical: None,
+            horizontal_offset: None,
+            vertical_offset: None,
+        },
+    );
+    let ov = OverlaySettings {
+        snap_memory: Some(mem),
+        ..Default::default()
+    };
+    let (edge, offset) = ov.snap_edge_offset("legacy.exe", "horizontal").unwrap();
+    assert_eq!(edge, "win-bottom");
+    assert!((offset - 0.5).abs() < 1e-9);
+}
+
+// 清除边记忆时偏移一并清除
+#[test]
+fn test_snap_edge_clear_removes_offset() {
+    let mut ov = OverlaySettings::default();
+    ov.set_snap_edge("a.exe", "horizontal", Some(("win-right", 0.2)));
+    ov.set_snap_edge("a.exe", "horizontal", None);
+    assert_eq!(ov.snap_edge_offset("a.exe", "horizontal"), None);
+}
+
+// 偏移越界（<0 或 >1）被校验拒绝
+#[test]
+fn test_snap_edge_offset_out_of_range_rejected() {
+    let mut config = create_default_config_fixture();
+    let mut mem = std::collections::HashMap::new();
+    mem.insert(
+        "bad.exe".to_string(),
+        SnapEdgeSettings {
+            horizontal: Some("win-bottom".to_string()),
+            horizontal_offset: Some(1.5),
+            vertical: None,
+            vertical_offset: None,
+        },
+    );
+    config.overlay = Some(OverlaySettings {
+        snap_memory: Some(mem),
+        ..Default::default()
+    });
+    let err = config.validate().unwrap_err();
+    assert!(
+        err.field.starts_with("overlay.snap_memory.bad.exe"),
+        "字段定位错误: {}",
+        err.field
+    );
+    assert!(
+        err.message.contains("偏移"),
+        "错误信息应提及偏移: {}",
+        err.message
+    );
+}
+
+// TOML 序列化 round-trip：偏移字段可写可读，缺省时不输出
+#[test]
+fn test_snap_edge_offset_toml_roundtrip() {
+    let mut ov = OverlaySettings::default();
+    ov.set_snap_edge("a.exe", "horizontal", Some(("screen-bottom", 0.25)));
+    let toml_str = toml::to_string(&ov).unwrap();
+    assert!(toml_str.contains("horizontal_offset = 0.25"), "应包含偏移字段: {toml_str}");
+    let back: OverlaySettings = toml::from_str(&toml_str).unwrap();
+    let (_, offset) = back.snap_edge_offset("a.exe", "horizontal").unwrap();
+    assert!((offset - 0.25).abs() < 1e-9);
 }
 

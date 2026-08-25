@@ -156,6 +156,13 @@ pub struct SnapEdgeSettings {
     /// 竖向布局吸附边（可选）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vertical: Option<String>,
+    /// 横向布局沿边方向偏移比例（0.0~1.0；None = 0.5 居中）。
+    /// 垂直边沿水平方向、水平边沿垂直方向插值定位。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_offset: Option<f64>,
+    /// 竖向布局沿边方向偏移比例（0.0~1.0；None = 0.5 居中）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_offset: Option<f64>,
 }
 
 impl OverlaySettings {
@@ -285,10 +292,32 @@ impl OverlaySettings {
         }
     }
 
-    /// 记录/清除指定进程在某布局的吸附边记忆。
-    /// edge 为 None 时清除该布局的记忆；清除后条目两布局均为空则删除整条，
-    /// 避免配置残留空表。
-    pub fn set_snap_edge(&mut self, process: &str, layout: &str, edge: Option<&str>) {
+    /// 读取指定进程在某布局的沿边偏移比例（无记忆返回 None）
+    pub fn snap_offset(&self, process: &str, layout: &str) -> Option<f64> {
+        let mem = self.snap_memory.as_ref()?;
+        let entry = mem
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(process))
+            .map(|(_, v)| v)?;
+        if layout == Self::LAYOUT_HORIZONTAL {
+            entry.horizontal_offset
+        } else {
+            entry.vertical_offset
+        }
+    }
+
+    /// 读取指定进程在某布局的吸附边与沿边偏移比例。
+    /// 返回 (边名, 偏移)；无偏移字段时偏移回退 0.5（居中，兼容旧配置）。
+    pub fn snap_edge_offset(&self, process: &str, layout: &str) -> Option<(String, f64)> {
+        let edge = self.snap_edge(process, layout)?;
+        let offset = self.snap_offset(process, layout).unwrap_or(0.5);
+        Some((edge, offset))
+    }
+
+    /// 记录/清除指定进程在某布局的吸附边与沿边偏移记忆。
+    /// edge 为 None 时清除该布局的记忆（含偏移）；清除后条目两布局均为空
+    /// 则删除整条，避免配置残留空表。
+    pub fn set_snap_edge(&mut self, process: &str, layout: &str, edge: Option<(&str, f64)>) {
         let mem = self.snap_memory.get_or_insert_with(Default::default);
         // 大小写不敏感：命中已有键则复用，避免同一进程多条目
         let key = mem
@@ -297,10 +326,25 @@ impl OverlaySettings {
             .cloned()
             .unwrap_or_else(|| process.to_string());
         let entry = mem.entry(key).or_default();
-        if layout == Self::LAYOUT_HORIZONTAL {
-            entry.horizontal = edge.map(str::to_string);
-        } else {
-            entry.vertical = edge.map(str::to_string);
+        match edge {
+            Some((e, off)) => {
+                if layout == Self::LAYOUT_HORIZONTAL {
+                    entry.horizontal = Some(e.to_string());
+                    entry.horizontal_offset = Some(off);
+                } else {
+                    entry.vertical = Some(e.to_string());
+                    entry.vertical_offset = Some(off);
+                }
+            }
+            None => {
+                if layout == Self::LAYOUT_HORIZONTAL {
+                    entry.horizontal = None;
+                    entry.horizontal_offset = None;
+                } else {
+                    entry.vertical = None;
+                    entry.vertical_offset = None;
+                }
+            }
         }
         if entry.horizontal.is_none() && entry.vertical.is_none() {
             // 条目已空：移除（key 已被 entry 独占借用结束，重新查找）
@@ -481,12 +525,12 @@ impl ConfigFile {
                     });
                 }
             }
-            // 校验吸附记忆的边值合法性（键为进程名，由运行时写入，此处仅校验值）
+            // 校验吸附记忆的边值合法性与沿边偏移范围
             if let Some(mem) = &overlay.snap_memory {
                 for (process, edges) in mem {
-                    for (layout_name, edge) in [
-                        ("horizontal", &edges.horizontal),
-                        ("vertical", &edges.vertical),
+                    for (layout_name, edge, offset) in [
+                        ("horizontal", &edges.horizontal, &edges.horizontal_offset),
+                        ("vertical", &edges.vertical, &edges.vertical_offset),
                     ] {
                         if let Some(e) = edge {
                             if !OverlaySettings::is_valid_snap_edge(e) {
@@ -496,6 +540,14 @@ impl ConfigFile {
                                         "吸附边 '{e}' 无效（应为 {} 之一）",
                                         OverlaySettings::SNAP_EDGES.join(" / ")
                                     ),
+                                });
+                            }
+                        }
+                        if let Some(off) = offset {
+                            if !(0.0..=1.0).contains(off) {
+                                return Err(ValidationError {
+                                    field: format!("overlay.snap_memory.{process}.{layout_name}_offset"),
+                                    message: format!("沿边偏移比例 {off} 超出范围（0.0~1.0）"),
                                 });
                             }
                         }
