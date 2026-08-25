@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QuickInput",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "identifier": "com.quickinput.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,7 +26,8 @@
         "skipTaskbar": true,
         "transparent": true,
         "visible": false,
-        "focus": false
+        "focus": false,
+        "shadow": false
       },
       {
         "label": "settings",
@@ -37,7 +38,8 @@
         "resizable": true,
         "decorations": false,
         "visible": false,
-        "center": true
+        "center": true,
+        "shadow": false
       },
       {
         "label": "floater",
@@ -55,7 +57,8 @@
         "skipTaskbar": true,
         "transparent": true,
         "visible": true,
-        "focus": false
+        "focus": false,
+        "shadow": false
       }
     ],
     "security": {
@@ -63,9 +66,21 @@
       "capabilities": [
         {
           "identifier": "app-windows-default",
-          "description": "为所有应用窗口授予 Tauri 默认能力（含事件监听/触发，浮层窗口事件通信必需）",
+          "description": "为所有应用窗口授予 Tauri 默认能力（含事件监听/触发、窗口显隐/拖拽/尺寸位置，浮层窗口事件通信必需）",
           "windows": ["overlay", "settings", "floater"],
-          "permissions": ["core:default"]
+          "permissions": [
+            "core:default",
+            "core:window:allow-hide",
+            "core:window:allow-show",
+            "core:window:allow-start-dragging",
+            "core:window:allow-set-size",
+            "core:window:allow-set-position",
+            "core:window:allow-outer-position",
+            "core:window:allow-outer-size",
+            "core:window:allow-inner-size",
+            "core:window:allow-scale-factor",
+            "opener:default"
+          ]
         }
       ]
     }

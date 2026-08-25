@@ -15,10 +15,12 @@
     clearTimeout(hideTimer);
     const el = wrap;
     if (!el) return;
-    // 锚点取整个按钮（.button-item），而非本组件的 tooltip-wrap：
-    // wrap 是 inline-flex，其 rect 仅覆盖按钮内容盒（padding 内），
-    // 用它定位会让浮层整体向按钮内部偏移。
-    const btnEl = el.closest(".button-item") ?? el.parentElement ?? el;
+    // 锚点取整个按钮（.button-item）。wrap 是 display:contents 且为按钮的
+    // 父级（`<Tooltip><button>`），closest 向上找不到内部按钮，须直接取子元素。
+    const btnEl = (el.firstElementChild as HTMLElement | null) ??
+      el.closest(".button-item") ??
+      el.parentElement ??
+      el;
     const r = btnEl.getBoundingClientRect();
     showTooltip(text, { x: r.left, y: r.top, w: r.width, h: r.height });
   }
@@ -41,8 +43,8 @@
 
 <style>
   .tooltip-wrap {
-    position: relative;
-    display: inline-flex;
-    width: 100%;
+    /* 不生成盒子：按钮直接参与 .button-list 的 flex 布局（布局不变），
+       同时鼠标事件仍从按钮冒泡至此触发 tooltip，覆盖整个按钮区域 */
+    display: contents;
   }
 </style>

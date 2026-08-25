@@ -656,23 +656,23 @@
     {/if}
     <div class="button-list">
       {#each buttons as btn (btn.id)}
-        <button
-          class="button-item"
-          class:is-clicking={injectingId === btn.id}
-          class:is-template={isTemplateBtn(btn)}
-          data-id={btn.id}
-          disabled={injectingId !== null && injectingId !== btn.id}
-          onmousedown={(e) => onBtnDown(e, btn)}
-          onmouseup={onBtnUp}
-          onmouseleave={onBtnLeave}
-        >
-          <Tooltip text={btn.comment}>
+        <Tooltip text={btn.comment}>
+          <button
+            class="button-item"
+            class:is-clicking={injectingId === btn.id}
+            class:is-template={isTemplateBtn(btn)}
+            data-id={btn.id}
+            disabled={injectingId !== null && injectingId !== btn.id}
+            onmousedown={(e) => onBtnDown(e, btn)}
+            onmouseup={onBtnUp}
+            onmouseleave={onBtnLeave}
+          >
             <span class="button-label">{btn.label}</span>
-          </Tooltip>
-          {#if btn.comment}
-            <span class="button-comment">{btn.comment}</span>
-          {/if}
-        </button>
+            {#if btn.comment}
+              <span class="button-comment">{btn.comment}</span>
+            {/if}
+          </button>
+        </Tooltip>
       {/each}
     </div>
 

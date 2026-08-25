@@ -736,8 +736,10 @@
 </svelte:head>
 
 <main class="settings-window">
-  <header class="drag-region" data-tauri-drag-region>
-    <span class="title">QuickInput 设置</span>
+  <header class="drag-region">
+    <!-- data-tauri-drag-region 仅作用于标题文字：整栏置为拖拽区会拦截
+         关闭按钮的 click（Tauri 拖动逻辑不识别 -webkit-app-region） -->
+    <span class="title" data-tauri-drag-region>QuickInput 设置</span>
     <button class="close-btn" onclick={closeWindow} aria-label="关闭">✕</button>
   </header>
 
