@@ -130,7 +130,7 @@
   const HOLD_MS = 2000;
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let pressedId: string | null = null;
-  let injectPromise: Promise<void> | null = null;
+  let injectPromise: Promise<unknown> | null = null;
 
   async function onBtnDown(e: MouseEvent, btn: ButtonConfig) {
     // 右键：按下立即弹自定义菜单（不依赖 contextmenu 事件——部分鼠标/触控板
@@ -149,7 +149,7 @@
     const isTpl = isTemplateBtn(btn);
     const outText = isTpl ? removePlaceholder(btn.content) : btn.content;
     const cursorBack = isTpl ? charsAfterPlaceholder(btn.content) : 0;
-    injectPromise = invoke("inject_text", { text: outText, cursorBack }).catch((err: unknown) => {
+    injectPromise = invoke("inject_text", { text: outText, cursorBack }).catch((err: unknown): void => {
       console.error(`注入失败 [${btn.label}]: ${err}`);
       lastError = `注入失败: ${err}`;
     });
@@ -378,7 +378,7 @@
       if (t?.closest?.(".ctx-menu, .template-dialog")) return;
       const el = t?.closest?.(".button-item");
       if (el) {
-        const btn = buttons.find((b) => b.id === el.dataset.id);
+        const btn = buttons.find((b) => b.id === (el as HTMLElement).dataset.id);
         if (btn) {
           showCtxMenu(e, btn);
           return;
@@ -399,7 +399,7 @@
       if (t?.closest?.(".ctx-menu, .template-dialog")) return;
       const el = t?.closest?.(".button-item");
       if (el) {
-        const btn = buttons.find((b) => b.id === el.dataset.id);
+        const btn = buttons.find((b) => b.id === (el as HTMLElement).dataset.id);
         if (btn) showCtxMenu(e, btn);
       }
     };

@@ -5,50 +5,95 @@
 
   // 指针拖拽排序 action：完全绕开浏览器 HTML5 DnD 引擎（其在 WebView2 中
   // 的 drop 派发不可靠且会显示禁止光标），改用 pointer 事件自行跟踪：
-  // pointerdown（行上）记录源行 → pointermove（全局）用 elementFromPoint
-  // 定位目标行 → pointerup（全局）一次性执行移动排序。move/up 必须挂在
-  // window 上：鼠标离开源行后事件不再冒泡到源行，行级监听会丢失跟踪。
+  // pointerdown（行上）记录源行 → pointermove（全局）让拖拽行跟随光标并
+  // 实时重排（配合 FLIP 让位动画）→ pointerup（全局）落定。move/up 必须
+  // 挂在 window 上：鼠标离开源行后事件不再冒泡到源行，行级监听会丢失跟踪。
   function pointerSort(
     node: HTMLElement,
     opts: { onMove: (from: number, to: number) => void }
   ) {
     let dragging = false;
     let from = -1;
-    let target = -1;
-    let targetEl: HTMLElement | null = null;
+    let grabOffsetY = 0; // 按下点在行内的垂直偏移（保持行跟随不跳变）
+    let currentDy = 0; // 拖拽行当前的 translateY（用于反解布局位置）
+    let flipToken = 0; // FLIP 过渡清理令牌：连续重排时只保留最后一次
 
     const down = (e: PointerEvent) => {
       // 移除按钮等交互元素上的按下不触发拖拽
-      if ((e.target as HTMLElement).closest?.("button")) return;
+      const t = e.target as HTMLElement;
+      if (t.closest?.("button")) return;
+      if (t.closest?.("input, select, textarea")) return;
+      node.classList.remove("drop-settle");
       from = Number(node.dataset.idx);
       dragging = true;
-      target = -1;
-      targetEl = null;
+      grabOffsetY = e.clientY - node.getBoundingClientRect().top;
+      currentDy = 0;
       node.classList.add("dragging");
       e.preventDefault();
     };
     const move = (e: PointerEvent) => {
       if (!dragging) return;
+      // 拖拽行跟随光标：保持按下点相对行内位置不变（反解出布局位置避免叠加）
+      const visualTop = node.getBoundingClientRect().top;
+      currentDy = e.clientY - grabOffsetY - (visualTop - currentDy);
+      node.style.setProperty("--drag-y", `${currentDy}px`);
+      // 拖拽行自身 pointer-events:none，elementFromPoint 会穿透命中下方真实行
       const el = document
         .elementFromPoint(e.clientX, e.clientY)
         ?.closest?.(".picker-row") as HTMLElement | null;
       const idx = el ? Number(el.dataset.idx) : -1;
-      if (idx !== target || el !== targetEl) {
-        targetEl?.classList.remove("drop-target");
-        target = idx;
-        targetEl = el;
-        targetEl?.classList.add("drop-target");
+      if (idx >= 0 && idx !== from) {
+        sortMove(from, idx);
+        from = idx;
       }
     };
     const up = () => {
       if (dragging) {
         node.classList.remove("dragging");
-        targetEl?.classList.remove("drop-target");
-        if (target >= 0 && target !== from) opts.onMove(from, target);
+        node.style.removeProperty("--drag-y");
+        currentDy = 0;
+        // 落定动画：行弹回原始尺寸，视觉上"松手放下"
+        node.classList.add("drop-settle");
+        node.addEventListener("animationend", () => {
+          node.classList.remove("drop-settle");
+        }, { once: true });
       }
       dragging = false;
-      target = -1;
-      targetEl = null;
+      from = -1;
+    };
+    // 移动一行并让其他行平滑让位（FLIP：First-Last-Invert-Play）
+    const sortMove = (f: number, to: number) => {
+      const listEl = node.parentElement;
+      const rows = [...(listEl?.querySelectorAll(".picker-row") ?? [])];
+      const first = new Map(
+        rows.map((r) => [r, (r as HTMLElement).getBoundingClientRect().top])
+      );
+      opts.onMove(f, to);
+      const token = ++flipToken;
+      requestAnimationFrame(() => {
+        const rows2 = listEl?.querySelectorAll(".picker-row") ?? [];
+        rows2.forEach((r) => {
+          const el = r as HTMLElement;
+          if (el === node) return; // 拖拽行由 --drag-y 控制，不参与 FLIP
+          const before = first.get(el);
+          if (before == null) return;
+          const delta = before - el.getBoundingClientRect().top;
+          if (Math.abs(delta) < 0.5) return;
+          el.style.transition = "none";
+          el.style.transform = `translateY(${delta}px)`;
+          requestAnimationFrame(() => {
+            el.style.transition = "transform 200ms cubic-bezier(0.22, 1, 0.36, 1)";
+            el.style.transform = "";
+          });
+          // 动画结束后清理内联过渡样式，避免残留影响下一次拖拽
+          setTimeout(() => {
+            if (flipToken === token) {
+              el.style.transition = "";
+              el.style.transform = "";
+            }
+          }, 260);
+        });
+      });
     };
     node.addEventListener("pointerdown", down);
     window.addEventListener("pointermove", move);
@@ -56,6 +101,7 @@
     window.addEventListener("pointercancel", up);
     return {
       destroy() {
+        flipToken++;
         node.removeEventListener("pointerdown", down);
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
@@ -1538,17 +1584,34 @@
     user-select: none;
     flex-shrink: 0;
     padding: 0 2px;
+    transition: color 120ms ease, transform 120ms ease;
   }
+  .picker-row:hover .drag-handle { color: #bbb; }
+  :global(.picker-row.dragging .drag-handle) { cursor: grabbing; transform: scale(1.1); }
   .picker-row {
     user-select: none;
+    transition: background-color 120ms ease, border-color 120ms ease;
   }
-  .picker-row.dragging {
-    opacity: 0.5;
+  /* 拖拽中：行浮起并跟随光标（translateY 由 --drag-y 驱动） */
+  :global(.picker-row.dragging) {
+    position: relative;
+    z-index: 20;
+    pointer-events: none; /* 让 elementFromPoint 穿透命中下方真实行 */
+    background: rgba(122, 162, 247, 0.18);
+    border-color: rgba(122, 162, 247, 0.5);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.2);
+    opacity: 0.95;
+    transform: translateY(var(--drag-y, 0px)) scale(1.03);
+    cursor: grabbing;
+    will-change: transform;
   }
-  .picker-row.drop-target {
-    outline: 1px dashed rgba(122, 162, 247, 0.8);
-    outline-offset: -1px;
-    background: rgba(122, 162, 247, 0.12);
+  /* 落定：松手后行弹回原始大小 */
+  :global(.picker-row.drop-settle) {
+    animation: picker-settle 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes picker-settle {
+    0% { transform: scale(1.04); }
+    100% { transform: scale(1); }
   }
   .form-actions {
     display: flex;
