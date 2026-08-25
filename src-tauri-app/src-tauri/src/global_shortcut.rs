@@ -199,6 +199,8 @@ fn map_vk(name: &str) -> Result<u16, String> {
 fn toggle_overlay(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("overlay") {
         if window.is_visible().unwrap_or(false) {
+            // 记录用户隐藏意图，避免自愈机制误判抢显
+            crate::window::set_overlay_user_hidden(true);
             let _ = window.hide();
         } else {
             crate::window::show_overlay_with_styles(app);

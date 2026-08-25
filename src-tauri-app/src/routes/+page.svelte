@@ -3,7 +3,6 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-  import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
   import Tooltip from "$lib/Tooltip.svelte";
 
   interface ButtonConfig {
@@ -83,10 +82,9 @@
   }
 
   // 隐藏悬浮窗（托盘菜单 / 全局热键可再次显示）
+  // 走后端命令：记录用户隐藏意图，避免自愈机制把主动隐藏误判为异常抢显
   function hideOverlay() {
-    getCurrentWebviewWindow()
-      .hide()
-      .catch((e) => console.error("隐藏悬浮窗失败", e));
+    invoke("hide_overlay").catch((e) => console.error("隐藏悬浮窗失败", e));
   }
 
   // 切换置顶并持久化（后端同步更新窗口 Z-order 与扩展样式）
@@ -472,8 +470,11 @@
     const unlistenResized = win.onResized(() => scheduleSaveGeometry());
 
     // ---- 横向布局高度自适应：按按钮行数调整客户区高度 ----
-    // 位移策略：首次调整（启动加载）保持顶边不动，避免窗口整体下移；
-    // 之后的调整（用户拖宽导致换行变化）保持底边不动，符合拖动交互习惯。
+    // 策略：前端只测量目标高度，单次调用后端原子调整（位置 + 尺寸一次
+    // SetWindowPos 生效，无"先改尺寸再改位置"的中间可见态）。
+    // 锚定方向由后端解析：吸附时保持贴合边不动（窗口下方/屏顶向下扩展、
+    // 窗口上方/屏底向上扩展、左右侧对称扩展）；无吸附时首次保顶边、
+    // 之后保底边（符合拖动交互习惯）。
     let firstAdjustDone = false;
     let adjustTimer: ReturnType<typeof setTimeout> | null = null;
     const adjustHorizontalHeight = async () => {
@@ -481,24 +482,17 @@
       const list = document.querySelector<HTMLElement>(".button-list");
       if (!list) return;
       try {
-        const [pos, inner, outer, scale] = await Promise.all([
-          win.outerPosition(),
-          win.innerSize(),
-          win.outerSize(),
-          win.scaleFactor(),
-        ]);
-        // 目标客户区高度（逻辑像素）：列表实际高度（含 padding，控制条浮动不占空间）+ 余量
+        const [inner, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+        // 目标客户区高度（物理像素）：列表实际高度（含 padding，控制条浮动不占空间）+ 余量
         const listH = list.scrollHeight;
         const banner = document.querySelector<HTMLElement>(".error-banner");
         const bannerH = banner ? banner.offsetHeight + 8 : 0;
         const targetInnerH = Math.round((listH + bannerH + 8) * scale);
         if (Math.abs(inner.height - targetInnerH) > 2) {
-          // 位移补偿：首次保持顶边，之后保持底边
-          const chrome = outer.height - inner.height;
-          const newOuterH = targetInnerH + chrome;
-          const newY = firstAdjustDone ? pos.y + outer.height - newOuterH : pos.y;
-          await win.setSize(new PhysicalSize(inner.width, targetInnerH));
-          await win.setPosition(new PhysicalPosition(pos.x, newY));
+          await invoke("apply_overlay_height", {
+            targetInnerH,
+            fallbackKeepTop: !firstAdjustDone,
+          });
         }
         firstAdjustDone = true;
       } catch (e) {

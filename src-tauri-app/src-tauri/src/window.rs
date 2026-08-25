@@ -3,7 +3,7 @@
 //! 负责 QuickInput 置顶浮层窗口的创建、系统级置顶/不抢焦点样式设置、
 //! 以及窗口句柄访问。首期实现 Windows 平台。
 
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 /// 模板输入弹窗打开前的系统前台窗口（关闭弹窗时恢复）
 #[cfg(target_os = "windows")]
@@ -487,6 +487,106 @@ fn move_overlay_native(hwnd: isize, x: i32, y: i32) -> bool {
     .is_ok()
 }
 
+/// 锚定方向下高度变化后的新 Y（物理像素，纯函数）
+///
+/// - anchor="top"：顶边不动（向下扩展）；"bottom"：底边不动（向上扩展）；
+///   "center"：居中对称扩展
+/// - 无吸附锚定时按 fallback_keep_top 选择保顶/保底
+fn anchored_new_y(anchor: Option<&str>, fallback_keep_top: bool, cur_y: i32, cur_h: i32, new_h: i32) -> i32 {
+    match anchor {
+        Some("top") => cur_y,
+        Some("bottom") => cur_y + cur_h - new_h,
+        Some("center") => cur_y + (cur_h - new_h) / 2,
+        _ => {
+            if fallback_keep_top {
+                cur_y
+            } else {
+                cur_y + cur_h - new_h
+            }
+        }
+    }
+}
+
+/// 解析当前吸附锚定方向（探测前台目标 + 读吸附记忆 → top/bottom/center）
+fn current_snap_anchor(app: &AppHandle) -> Option<String> {
+    let info = crate::target_window::current_target_window()?;
+    let overlay = app
+        .try_state::<crate::AppState>()
+        .and_then(|state| {
+            state
+                .config_manager
+                .lock()
+                .ok()
+                .and_then(|mgr| mgr.config().overlay.clone())
+        })?;
+    let edge = overlay.snap_edge(&info.process_name, &current_layout(app))?;
+    let edge = crate::target_window::map_edge_for_target(&edge, &info);
+    crate::target_window::height_anchor_for_edge(edge).map(str::to_string)
+}
+
+/// 横排高度自适应：单次原生原子调整（位置 + 尺寸一次 SetWindowPos 生效）
+///
+/// 由前端测量目标客户区高度后调用。相比前端分步 setSize/setPosition：
+/// - 无中间可见态（先改尺寸后改位置的两步会各产生一次可见跳变）
+/// - 锚定方向解析（吸附边 → 保顶/保底/居中）在后端一次完成
+/// - 目标客户区高度为物理像素
+pub fn apply_overlay_height_anchored(
+    app: &AppHandle,
+    target_inner_h: u32,
+    fallback_keep_top: bool,
+) -> Result<(), String> {
+    let win = get_overlay_window(app).ok_or_else(|| "浮层窗口 (overlay) 未找到".to_string())?;
+    let pos = win.outer_position().map_err(|e| e.to_string())?;
+    let inner = win.inner_size().map_err(|e| e.to_string())?;
+    let outer = win.outer_size().map_err(|e| e.to_string())?;
+    // 边框高度（外框 - 客户区，物理像素）
+    let chrome_h = outer.height.saturating_sub(inner.height) as i32;
+    let new_outer_h = target_inner_h as i32 + chrome_h;
+    let anchor = current_snap_anchor(app);
+    let new_y = anchored_new_y(
+        anchor.as_deref(),
+        fallback_keep_top,
+        pos.y,
+        outer.height as i32,
+        new_outer_h,
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+        };
+        let h = overlay_hwnd(app).ok_or_else(|| "浮层窗口句柄解析失败".to_string())?;
+        let hwnd = HWND(h as *mut std::ffi::c_void);
+        let ok = unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND(std::ptr::null_mut()),
+                pos.x,
+                new_y,
+                outer.width as i32,
+                new_outer_h,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        }
+        .is_ok();
+        if ok {
+            Ok(())
+        } else {
+            Err("SetWindowPos 原子调整失败".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 非 Windows 回退：分步调整（无可观测跳变问题的平台可接受）
+        let _ = win.set_size(tauri::PhysicalSize::new(outer.width, new_outer_h as u32));
+        let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, new_y));
+        Ok(())
+    }
+}
+
 /// 解析悬浮窗原生句柄（生命周期内稳定，跟随线程缓存一次即可）
 #[cfg(target_os = "windows")]
 fn overlay_hwnd(app: &AppHandle) -> Option<isize> {
@@ -568,6 +668,24 @@ pub fn run_snap_follow(app: AppHandle) {
                         }
                         _ => match tw::probe_target(hwnd) {
                             Some(info) => {
+                                // 前台进程切换：立即发射配置切换（本线程空闲档 150ms
+                                // 内响应，快于 500ms 焦点轮询；探测已得到进程名，
+                                // 零额外系统调用。与焦点监听线程经 current_process
+                                // 互斥去重，先到先得，不重复发射）
+                                if let Some(state) = app.try_state::<crate::AppState>() {
+                                    let should_emit = {
+                                        let mut cur = state.current_process.lock().unwrap();
+                                        if cur.eq_ignore_ascii_case(&info.process_name) {
+                                            false
+                                        } else {
+                                            *cur = info.process_name.clone();
+                                            true
+                                        }
+                                    };
+                                    if should_emit {
+                                        let _ = app.emit("ConfigSwitched", ());
+                                    }
+                                }
                                 tracker = Some((hwnd, info));
                                 last_change = Instant::now();
                             }
@@ -614,6 +732,11 @@ pub fn run_snap_follow(app: AppHandle) {
                 }
             }
 
+            // ---- 健康自检：非意图隐藏 / 样式丢失自愈（原生查询，微秒级）----
+            if ensure_overlay_sane(&app) {
+                last_change = Instant::now();
+            }
+
             // ---- 自适应间隔：活跃窗口内快轮询，静止后回落 ----
             let interval = if last_change.elapsed() < Duration::from_millis(FOLLOW_SETTLE_MS) {
                 FOLLOW_ACTIVE_MS
@@ -639,16 +762,126 @@ pub fn run_snap_follow(app: AppHandle) {
     }
 }
 
+/// 用户主动隐藏意图标志：经托盘/热键/隐藏按钮隐藏时不做自愈
+static OVERLAY_USER_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 浮层页面加载完成标志：此前为启动初始态不得自愈抢显（避免白屏闪烁），
+/// 此后若窗口仍隐藏即属异常（显示握手竞态），允许自愈恢复
+static OVERLAY_PAGE_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 记录用户主动隐藏意图（托盘/热键/隐藏按钮路径调用）
+pub fn set_overlay_user_hidden(hidden: bool) {
+    OVERLAY_USER_HIDDEN.store(hidden, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 标记浮层页面加载完成（on_page_load Finished 时由 lib.rs 调用）
+pub fn set_overlay_page_ready() {
+    OVERLAY_PAGE_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// 显示悬浮窗并重申不抢焦点样式
 ///
 /// show() 可能让 tao/WebView2 重新应用窗口样式（实测顶层 WS_EX_NOACTIVATE
 /// 会被覆盖丢失），导致后续点击悬浮窗激活窗口、目标输入框失焦。
 /// 所有显示悬浮窗的路径统一走此函数：显示后立即重申样式。
+/// 同时清除用户隐藏意图（自愈机制依据：此后隐藏即属异常）。
 pub fn show_overlay_with_styles(app: &AppHandle) {
     if let Some(win) = get_overlay_window(app) {
         let _ = win.show();
     }
+    OVERLAY_USER_HIDDEN.store(false, std::sync::atomic::Ordering::SeqCst);
     let _ = apply_overlay_styles(app);
+}
+
+/// 原生显示窗口（跨线程可靠；tao 的 show() 仅主线程生效）
+///
+/// 实测（0.10.1 自愈风暴诊断）：跟随线程调用 WebviewWindow::show() 不产生
+/// 效果（事件派发链在非主线程断裂），窗口保持隐藏。Win32 ShowWindow
+/// 经消息队列投递，任意线程调用均可靠，且自带 NOACTIVATE 语义不打扰焦点。
+#[cfg(target_os = "windows")]
+fn show_window_native(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SHOW_WINDOW_CMD};
+    if hwnd == 0 {
+        return false;
+    }
+    let h = HWND(hwnd as *mut std::ffi::c_void);
+    // SW_SHOW = 5
+    unsafe { ShowWindow(h, SHOW_WINDOW_CMD(5)) }.as_bool()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_window_native(_hwnd: isize) -> bool {
+    false
+}
+
+/// 悬浮窗健康自检：非用户意图的隐藏或样式丢失时自动恢复
+///
+/// 故障形态（0.10.1 实测捕获）：
+/// - 进程重启后显示握手竞态 → 窗口停留初始隐藏态，切换布局/重置均只改
+///   几何不调 show，悬浮窗"消失"且重置无效
+/// - 扩展样式（NOACTIVATE/TOOLWINDOW）被外部重置
+/// 自愈策略：跟随线程每轮以一两次 GetWindowLongPtrW（微秒级）检查
+/// 可见性与关键样式，异常时原生恢复（ShowWindow/SetWindowLong 均可
+/// 跨线程），并输出诊断日志供溯源。返回 true 表示执行了恢复。
+pub fn ensure_overlay_sane(app: &AppHandle) -> bool {
+    // 启动初始态（页面未加载完成，避免白屏抢显）或用户主动隐藏：不干预
+    if OVERLAY_USER_HIDDEN.load(std::sync::atomic::Ordering::SeqCst)
+        || !OVERLAY_PAGE_READY.load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, GWL_STYLE, WS_VISIBLE,
+        };
+        let Some(h) = overlay_hwnd(app) else {
+            return false;
+        };
+        let hwnd = HWND(h as *mut std::ffi::c_void);
+        let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+        let visible = (style & (WS_VISIBLE.0 as isize)) != 0;
+        if !visible {
+            eprintln!("[overlay-sane] 检测到悬浮窗非预期隐藏，原生恢复显示");
+            show_window_native(h);
+            let _ = apply_overlay_styles(app);
+            return true;
+        }
+        if !native_style_ok(h) {
+            eprintln!("[overlay-sane] 检测到扩展样式丢失（NOACTIVATE/TOOLWINDOW），重申样式");
+            let _ = apply_overlay_styles(app);
+            return true;
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+    }
+
+    false
+}
+
+/// 窗口物理样式快速检查（不走 Tauri IPC，直接 Win32；自愈热路径用）
+#[cfg(target_os = "windows")]
+fn native_style_ok(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    };
+    if hwnd == 0 {
+        return false;
+    }
+    let h = HWND(hwnd as *mut std::ffi::c_void);
+    let ex = unsafe { GetWindowLongPtrW(h, GWL_EXSTYLE) };
+    (ex & (WS_EX_NOACTIVATE.0 as isize)) != 0 && (ex & (WS_EX_TOOLWINDOW.0 as isize)) != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_style_ok(_hwnd: isize) -> bool {
+    true
 }
 
 /// 重置悬浮窗位置与大小：清除两布局的记忆几何与吸附记忆，恢复默认几何
@@ -677,6 +910,17 @@ pub fn reset_overlay_geometry(app: &AppHandle) {
             }
             let _ = mgr.save();
         }
+    }
+    // 重置语义即"找回悬浮窗"：清除隐藏意图并确保可见（含样式重申），
+    // 覆盖窗口被异常隐藏导致"重置后仍不出现"的故障形态
+    set_overlay_user_hidden(false);
+    if get_overlay_window(app)
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false)
+    {
+        let _ = apply_overlay_styles(app);
+    } else {
+        show_overlay_with_styles(app);
     }
     // 应用当前布局的默认几何（含屏幕内钳制）
     apply_overlay_geometry(app, &current_layout(app));
@@ -818,4 +1062,37 @@ fn apply_windows_overlay_styles(app: &AppHandle) -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anchored_new_y;
+
+    // 高度 100→160（增长 60）时各锚定方向的新 Y（当前 y=200）
+    #[test]
+    fn test_anchored_new_y_growth() {
+        // 保顶（win-bottom/screen-top 吸附：贴合边在顶，向下扩展）
+        assert_eq!(anchored_new_y(Some("top"), false, 200, 100, 160), 200);
+        // 保底（win-top/screen-bottom 吸附：贴合边在底，向上扩展）
+        assert_eq!(anchored_new_y(Some("bottom"), false, 200, 100, 160), 140);
+        // 居中（左右侧吸附：对称扩展，上下各让 30）
+        assert_eq!(anchored_new_y(Some("center"), false, 200, 100, 160), 170);
+    }
+
+    // 高度收缩 160→100 时贴合边同样不动
+    #[test]
+    fn test_anchored_new_y_shrink() {
+        assert_eq!(anchored_new_y(Some("top"), false, 200, 160, 100), 200);
+        assert_eq!(anchored_new_y(Some("bottom"), false, 200, 160, 100), 260);
+        assert_eq!(anchored_new_y(Some("center"), false, 200, 160, 100), 230);
+    }
+
+    // 无吸附锚定：回退策略由 fallback_keep_top 决定（首次保顶/之后保底）
+    #[test]
+    fn test_anchored_new_y_fallback() {
+        assert_eq!(anchored_new_y(None, true, 200, 100, 160), 200);
+        assert_eq!(anchored_new_y(None, false, 200, 100, 160), 140);
+        // 未知锚定值按无锚定处理
+        assert_eq!(anchored_new_y(Some("diagonal"), true, 200, 100, 160), 200);
+    }
 }

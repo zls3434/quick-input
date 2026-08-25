@@ -318,6 +318,22 @@ pub fn map_edge_for_target<'a>(edge: &'a str, info: &TargetWindowInfo) -> &'a st
     }
 }
 
+/// 高度变化时的锚定方向（悬浮窗尺寸自适应时保持哪条边不动，减少跳跃感）
+///
+/// 吸附边的贴合侧即锚定侧：
+/// - win-bottom（悬浮窗在窗口下方，顶边贴合）/ screen-top（屏顶）→ "top"，向下扩展
+/// - win-top（悬浮窗在窗口上方，底边贴合）/ screen-bottom（屏底）→ "bottom"，向上扩展
+/// - 左右侧吸附（win/screen-left/right）：竖直方向居中对齐 → "center"，对称扩展
+/// - 非吸附边 → None（调用方回退默认策略）
+pub fn height_anchor_for_edge(edge: &str) -> Option<&'static str> {
+    match edge {
+        "win-bottom" | "screen-top" => Some("top"),
+        "win-top" | "screen-bottom" => Some("bottom"),
+        "win-left" | "win-right" | "screen-left" | "screen-right" => Some("center"),
+        _ => None,
+    }
+}
+
 /// 拖动结束时的吸附判定：悬浮窗当前几何（逻辑坐标，外框）距哪条候选边最近
 ///
 /// 候选边集合：
@@ -604,6 +620,25 @@ mod tests {
         let info = windowed_target();
         assert_eq!(map_edge_for_target("win-bottom", &info), "win-bottom");
         assert_eq!(map_edge_for_target("screen-right", &info), "screen-right");
+    }
+
+    // ---- height_anchor_for_edge ----
+
+    #[test]
+    fn test_height_anchor_mapping() {
+        // 窗口下方（win-bottom：顶边贴合窗口底）与屏顶：锚定顶边，向下扩展
+        assert_eq!(height_anchor_for_edge("win-bottom"), Some("top"));
+        assert_eq!(height_anchor_for_edge("screen-top"), Some("top"));
+        // 窗口上方（win-top：底边贴合窗口顶）与屏底：锚定底边，向上扩展
+        assert_eq!(height_anchor_for_edge("win-top"), Some("bottom"));
+        assert_eq!(height_anchor_for_edge("screen-bottom"), Some("bottom"));
+        // 左右侧吸附：居中对称扩展
+        for e in ["win-left", "win-right", "screen-left", "screen-right"] {
+            assert_eq!(height_anchor_for_edge(e), Some("center"), "edge={e}");
+        }
+        // 非吸附边
+        assert_eq!(height_anchor_for_edge("diagonal"), None);
+        assert_eq!(height_anchor_for_edge(""), None);
     }
 
     // ---- current_target_window 冒烟（真实环境不 panic） ----

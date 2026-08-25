@@ -526,12 +526,39 @@ fn save_overlay_geometry(
     Ok(())
 }
 
+/// 隐藏悬浮窗（前端隐藏按钮入口）
+///
+/// 记录用户隐藏意图（自愈机制不抢显）后隐藏窗口；
+/// 再次显示经托盘菜单/全局热键/本命令的显示分支。
+#[tauri::command]
+fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    window::set_overlay_user_hidden(true);
+    if let Some(win) = app.get_webview_window(window::OVERLAY_WINDOW_LABEL) {
+        win.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 设置悬浮窗拖动会话标志（前端拖动开始时置位；结束由后端按左键状态检测）
 ///
 /// 跟随线程在会话期间暂停重定位，避免与系统模态移动循环抢位。
 #[tauri::command]
 fn set_overlay_dragging(dragging: bool) {
     window::set_overlay_dragging(dragging);
+}
+
+/// 横排高度自适应：单次原子调整（位置 + 尺寸一次原生 SetWindowPos 生效）
+///
+/// 前端测量出目标客户区高度（物理像素）后调用。锚定方向（吸附边 →
+/// 保顶/保底/居中）由后端统一解析，无吸附时按 fallback_keep_top 回退
+/// （首次调整保顶边、之后保底边）。
+#[tauri::command]
+fn apply_overlay_height(
+    app: tauri::AppHandle,
+    target_inner_h: u32,
+    fallback_keep_top: Option<bool>,
+) -> Result<(), String> {
+    window::apply_overlay_height_anchored(&app, target_inner_h, fallback_keep_top.unwrap_or(true))
 }
 
 /// 删除一个应用画像
@@ -834,6 +861,8 @@ pub fn run() {
             set_overlay_always_on_top,
             save_overlay_geometry,
             set_overlay_dragging,
+            apply_overlay_height,
+            hide_overlay,
             reset_overlay_geometry_command,
             update_profile,
             delete_profile,
@@ -862,6 +891,9 @@ pub fn run() {
             if payload.event() == PageLoadEvent::Finished && webview.label() == "overlay" {
                 use tauri::Manager;
                 let app = webview.app_handle();
+                // 页面就绪后允许自愈：此后窗口若停留隐藏态（显示握手竞态，
+                // 如进程重启轮换时序异常），跟随线程将原生恢复显示
+                window::set_overlay_page_ready();
                 let _ = window::apply_overlay_styles(app);
                 let state_ready = app.try_state::<crate::AppState>().is_some();
                 if state_ready {
