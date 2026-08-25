@@ -46,6 +46,17 @@
       text = "";
       items = [];
     });
+    // 兜底：页面 JS 因后台节流挂起期间到达的显示请求（事件丢失），
+    // 页面启动后主动取回最近一次请求，保证浮层内容不丢。
+    void invoke<ShowPayload | null>("floater_pull_pending")
+      .then((pending) => {
+        if (!pending) return;
+        kind = pending.kind;
+        text = pending.text ?? "";
+        items = pending.items ?? [];
+        reportSize();
+      })
+      .catch(() => {});
     return () => {
       void unshow.then((f) => f());
       void unorient.then((f) => f());
@@ -53,8 +64,13 @@
     };
   });
 
-  function onItemClick(id: string) {
-    void invoke("floater_action", { id }).catch((e) => console.error("菜单动作失败", e));
+  function onItemClick(item: MenuItem) {
+    if (item.disabled) {
+      // 禁用项：仅关闭菜单，不转发动作
+      void invoke("hide_floater").catch(() => {});
+      return;
+    }
+    void invoke("floater_action", { id: item.id }).catch((e) => console.error("菜单动作失败", e));
   }
 </script>
 
@@ -66,8 +82,8 @@
       <button
         class="ctx-item"
         class:disabled={item.disabled}
-        disabled={item.disabled}
-        onclick={() => onItemClick(item.id)}
+        aria-disabled={item.disabled}
+        onclick={() => onItemClick(item)}
       >
         {item.label}
       </button>

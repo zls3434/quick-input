@@ -43,6 +43,8 @@
         "label": "floater",
         "title": "QuickInput 浮层",
         "url": "/floater",
+        "x": 0,
+        "y": 0,
         "width": 1,
         "height": 1,
         "alwaysOnTop": true,
@@ -52,12 +54,20 @@
         "minimizable": false,
         "skipTaskbar": true,
         "transparent": true,
-        "visible": false,
+        "visible": true,
         "focus": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "app-windows-default",
+          "description": "为所有应用窗口授予 Tauri 默认能力（含事件监听/触发，浮层窗口事件通信必需）",
+          "windows": ["overlay", "settings", "floater"],
+          "permissions": ["core:default"]
+        }
+      ]
     }
   },
   "bundle": {

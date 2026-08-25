@@ -115,11 +115,16 @@
       .catch((err) => console.error("拖动悬浮窗失败", err));
   }
 
+  // 启动竞态重试计数：页面加载可能早于 Rust setup 完成 AppState 管理，
+  // get_buttons 会临时失败；限次重试直至成功（成功即清零）。
+  let buttonLoadRetries = 0;
+
   async function loadButtons() {
     loading = true;
     error = null;
     try {
       buttons = await invoke<ButtonConfig[]>("get_buttons");
+      buttonLoadRetries = 0;
       // 注入模式与按钮列表同源（同一配置匹配逻辑），一并刷新
       injectMode = await invoke<"paste" | "keystroke">("get_current_inject_mode");
       // 长按触发阈值（配置管理可调，200~5000ms，缺省 1000）
@@ -128,6 +133,10 @@
     } catch (e) {
       error = `加载按钮失败: ${e}`;
       console.error(e);
+      if (buttonLoadRetries < 20) {
+        buttonLoadRetries += 1;
+        setTimeout(() => void loadButtons(), 300);
+      }
     } finally {
       loading = false;
       // 按钮列表变化可能改变横向布局行数，通知高度自适应（监听在 onMount 注册）

@@ -220,8 +220,10 @@ pub fn show_floater(
     };
     let overlay = get_overlay_window(&app).ok_or_else(|| "悬浮窗 (overlay) 未找到".to_string())?;
 
-    // 锚点逻辑像素 → 物理像素（outer_position 为物理坐标）
-    let pos = overlay.outer_position().map_err(|e| e.to_string())?;
+    // 锚点逻辑像素 → 物理像素。前端 getBoundingClientRect 是客户区相对坐标，
+    // 须用客户区原点（inner_position）；若用 outer_position（外框），透明窗口
+    // 的系统边框/阴影（实测左 8px、上 1px）会使浮层整体向左上偏移。
+    let pos = overlay.inner_position().map_err(|e| e.to_string())?;
     let scale = overlay.scale_factor().map_err(|e| e.to_string())?;
     let (ox, oy) = (pos.x as f64, pos.y as f64);
     let anchor_px = (
@@ -243,15 +245,42 @@ pub fn show_floater(
     }
 
     let payload = serde_json::json!({ "kind": kind, "text": text, "items": items });
-    if FLOATER_PAGE_READY.load(Ordering::SeqCst) {
-        let floater = get_floater_window(&app).ok_or_else(|| "浮层窗口 (floater) 未找到".to_string())?;
-        floater.emit("floater://show", payload).map_err(|e| e.to_string())
-    } else {
-        // 页面未加载完成：缓存，on_page_load 补发
+    // 双通道投递：事件优先送达（页面已就绪时），PENDING_SHOW 缓存供
+    // 页面 onMount 主动 pull 兜底（页面 JS 因后台节流挂起时事件会丢失）。
+    {
         let mut slot = PENDING_SHOW.lock().map_err(|e| e.to_string())?;
-        *slot = Some(payload);
-        Ok(())
+        *slot = Some(payload.clone());
     }
+    app.emit_to("floater", "floater://show", payload)
+        .map_err(|e| e.to_string())
+}
+
+/// 拉取待显示内容（floater 页面 onMount 兜底调用：页面就绪前的事件
+/// 可能丢失，页面启动后主动取回最近一次显示请求）
+#[tauri::command]
+pub fn floater_pull_pending() -> Option<serde_json::Value> {
+    PENDING_SHOW.lock().ok().and_then(|mut s| s.take())
+}
+
+/// 诊断：浮层模块状态（排查用）
+#[tauri::command]
+pub fn floater_debug() -> String {
+    let kind = CURRENT_KIND
+        .lock()
+        .ok()
+        .and_then(|s| *s)
+        .map(|k| match k {
+            FloaterKind::Tooltip => "tooltip",
+            FloaterKind::Menu => "menu",
+        })
+        .unwrap_or("none");
+    format!(
+        "page_ready={} pending_show={} pending_placement={} current_kind={}",
+        FLOATER_PAGE_READY.load(Ordering::SeqCst),
+        PENDING_SHOW.lock().map(|s| s.is_some()).unwrap_or(false),
+        PENDING.lock().map(|s| s.is_some()).unwrap_or(false),
+        kind
+    )
 }
 
 /// 浮层内容渲染完成：按上报尺寸定位并显示
@@ -269,12 +298,26 @@ pub fn floater_ready(app: AppHandle, width: f64, height: f64) -> Result<(), Stri
     let (x, y) = compute_floater_placement(pending.anchor, size, pending.work_area, pending.kind);
 
     floater.set_size(tauri::LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
-    floater.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+
+    // compute 结果为内容（客户区）左上角，但 set_position 设置的是外框位置。
+    // 透明窗口仍可能带系统边框/阴影（实测左 8px、上 1px），若直接按外框
+    // 定位，内容会整体向右下偏移。用 inner_position 与 outer_position 的
+    // 差值修正，使客户区精确落在目标位置。
+    let outer = floater.outer_position().map_err(|e| e.to_string())?;
+    let inner = floater.inner_position().map_err(|e| e.to_string())?;
+    let (fx, fy) = ((inner.x - outer.x) as i32, (inner.y - outer.y) as i32);
+    floater.set_position(tauri::PhysicalPosition::new(x - fx, y - fy)).map_err(|e| e.to_string())?;
 
     // tooltip 鼠标穿透 + 不抢焦点；menu 可点击
     set_floater_click_through(&app, pending.kind == FloaterKind::Tooltip)?;
 
     floater.show().map_err(|e| e.to_string())?;
+
+    // 菜单浮层获得焦点：点击其他窗口/桌面时触发 Focused(false) → 自动关闭。
+    // tooltip 保持不抢焦点（NOACTIVATE）。
+    if pending.kind == FloaterKind::Menu {
+        let _ = floater.set_focus();
+    }
 
     // 通知前端最终方向（tooltip 箭头翻转：浮层在锚点上方 → 箭头朝下指按钮）
     let above = pending.kind == FloaterKind::Tooltip && y + size.1 <= pending.anchor.1;
@@ -284,10 +327,16 @@ pub fn floater_ready(app: AppHandle, width: f64, height: f64) -> Result<(), Stri
 }
 
 /// 隐藏浮层（幂等）
+///
+/// 不真正隐藏窗口、不移到屏幕外：两者都会导致 WebView2 判定页面不可见，
+/// 挂起页面 JS 执行（background throttling），后续 `floater://show` 事件
+/// 到达时监听器未运行而丢失。改为把窗口移回屏幕左上角（0,0）保持
+/// 1x1 可见，页面持续运行，事件可靠投递。
 #[tauri::command]
 pub fn hide_floater(app: AppHandle) -> Result<(), String> {
     if let Some(floater) = get_floater_window(&app) {
-        let _ = floater.hide();
+        let _ = floater.set_size(tauri::LogicalSize::new(1.0, 1.0));
+        let _ = floater.set_position(tauri::PhysicalPosition::new(0, 0));
         let _ = floater.emit("floater://hide", ());
     }
     if let Ok(mut slot) = CURRENT_KIND.lock() {

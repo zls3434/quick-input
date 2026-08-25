@@ -15,7 +15,11 @@
     clearTimeout(hideTimer);
     const el = wrap;
     if (!el) return;
-    const r = el.getBoundingClientRect();
+    // 锚点取整个按钮（.button-item），而非本组件的 tooltip-wrap：
+    // wrap 是 inline-flex，其 rect 仅覆盖按钮内容盒（padding 内），
+    // 用它定位会让浮层整体向按钮内部偏移。
+    const btnEl = el.closest(".button-item") ?? el.parentElement ?? el;
+    const r = btnEl.getBoundingClientRect();
     showTooltip(text, { x: r.left, y: r.top, w: r.width, h: r.height });
   }
 
