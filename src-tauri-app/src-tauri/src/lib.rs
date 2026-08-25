@@ -502,8 +502,8 @@ fn save_overlay_geometry(
     let mut snapped_pos: Option<(i32, i32)> = None;
     if user_drag.unwrap_or(false) {
         match window::evaluate_drag_snap(&app) {
-            window::DragSnapOutcome::Snapped { process, edge, pos } => {
-                overlay.set_snap_edge(&process, &layout, Some(edge));
+            window::DragSnapOutcome::Snapped { process, edge, offset, pos } => {
+                overlay.set_snap_edge(&process, &layout, Some((edge, offset)));
                 final_x = pos.0;
                 final_y = pos.1;
                 snapped_pos = Some(pos);

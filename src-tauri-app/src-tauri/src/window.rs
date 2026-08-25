@@ -318,8 +318,8 @@ fn left_button_down() -> bool {
 fn handle_drag_end(app: &AppHandle) {
     let layout = current_layout(app);
     match evaluate_drag_snap(app) {
-        DragSnapOutcome::Snapped { process, edge, pos } => {
-            if write_snap_edge(app, &process, &layout, Some(edge)) {
+        DragSnapOutcome::Snapped { process, edge, offset, pos } => {
+            if write_snap_edge(app, &process, &layout, Some((edge, offset))) {
                 move_overlay(app, pos.0, pos.1);
             }
         }
@@ -331,8 +331,13 @@ fn handle_drag_end(app: &AppHandle) {
     }
 }
 
-/// 写入/清除吸附记忆并落盘（无状态/加锁失败/校验失败返回 false）
-fn write_snap_edge(app: &AppHandle, process: &str, layout: &str, edge: Option<&str>) -> bool {
+/// 写入/清除吸附记忆（边 + 沿边偏移）并落盘（无状态/加锁失败/校验失败返回 false）
+fn write_snap_edge(
+    app: &AppHandle,
+    process: &str,
+    layout: &str,
+    edge: Option<(&str, f64)>,
+) -> bool {
     let Some(state) = app.try_state::<crate::AppState>() else {
         return false;
     };
@@ -386,17 +391,18 @@ fn snap_position_for(
                 .ok()
                 .and_then(|mgr| mgr.config().overlay.clone())
         })?;
-    let edge = overlay.snap_edge(&info.process_name, layout)?;
+    let (edge, offset) = overlay.snap_edge_offset(&info.process_name, layout)?;
     let edge = crate::target_window::map_edge_for_target(&edge, info);
-    crate::target_window::snapped_position(edge, ow, oh, info, scale)
+    crate::target_window::snapped_position(edge, ow, oh, offset, info, scale)
 }
 
 /// 拖动结束后的吸附判定结果
 pub enum DragSnapOutcome {
-    /// 命中吸附：目标进程名、吸附边、吸附后位置（逻辑坐标）
+    /// 命中吸附：目标进程名、吸附边、沿边偏移比例、吸附后位置（逻辑坐标）
     Snapped {
         process: String,
         edge: &'static str,
+        offset: f64,
         pos: (i32, i32),
     },
     /// 未命中任何吸附点（目标存在）：应清除该进程本布局的吸附记忆
@@ -425,17 +431,23 @@ pub fn evaluate_drag_snap(app: &AppHandle) -> DragSnapOutcome {
     let (ow, oh) = (outer.width as f64 / scale, outer.height as f64 / scale);
 
     match crate::target_window::detect_snap_edge(ox, oy, ow, oh, &info, scale) {
-        Some(edge) => match crate::target_window::snapped_position(edge, ow, oh, &info, scale) {
-            Some((x, y)) => DragSnapOutcome::Snapped {
-                process: info.process_name,
-                edge,
-                pos: (x.round() as i32, y.round() as i32),
-            },
-            // 边合法则位置计算必成功；防御性回退
-            None => DragSnapOutcome::Missed {
-                process: info.process_name,
-            },
-        },
+        Some(edge) => {
+            let offset = crate::target_window::offset_from_position(
+                edge, ox, oy, ow, oh, &info, scale,
+            );
+            match crate::target_window::snapped_position(edge, ow, oh, offset, &info, scale) {
+                Some((x, y)) => DragSnapOutcome::Snapped {
+                    process: info.process_name,
+                    edge,
+                    offset,
+                    pos: (x.round() as i32, y.round() as i32),
+                },
+                // 边合法则位置计算必成功；防御性回退
+                None => DragSnapOutcome::Missed {
+                    process: info.process_name,
+                },
+            }
+        }
         None => DragSnapOutcome::Missed {
             process: info.process_name,
         },
