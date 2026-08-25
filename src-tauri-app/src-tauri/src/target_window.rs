@@ -387,8 +387,10 @@ pub fn detect_snap_edge(
 
 /// 计算吸附边的悬浮窗位置（逻辑坐标，返回外框左上角）
 ///
-/// - screen-*：贴合工作区边（0 间距），沿边在工作区内居中
-/// - win-*：贴合窗口外侧（SNAP_GAP 间距），沿边在窗口投影内居中
+/// - screen-*：贴合工作区边（0 间距），沿边方向在工作区内按 offset 插值
+/// - win-*：贴合窗口外侧（SNAP_GAP 间距），沿边方向在窗口投影内按 offset 插值
+/// - offset ∈ [0,1]：0 靠边起点、1 靠边终点、0.5 居中（旧行为）
+/// - 目标空间小于悬浮窗时沿边居中兜底
 /// - 最终位置钳制到工作区内（窗口贴屏幕边时外侧空间不足则内收）
 ///
 /// 非法边返回 None（调用方回退到记忆位置/默认位置）。
@@ -396,6 +398,7 @@ pub fn snapped_position(
     edge: &str,
     ow: f64,
     oh: f64,
+    offset: f64,
     info: &TargetWindowInfo,
     scale: f64,
 ) -> Option<(f64, f64)> {
@@ -403,16 +406,28 @@ pub fn snapped_position(
     let (wa_l, wa_t, wa_r, wa_b) = (wa.0, wa.1, wa.2, wa.3);
     let wr = logical_rect(info.rect, scale);
     let (wl, wt, wrr, wb) = (wr.0, wr.1, wr.2, wr.3);
+    let offset = offset.clamp(0.0, 1.0);
+
+    // 沿边方向插值：start 起、len 长的目标空间内摆放 size 尺寸的悬浮窗。
+    // 可用行程 = len - size；空间不足时居中，否则按 offset 比例定位。
+    let along = |start: f64, len: f64, size: f64| -> f64 {
+        let travel = len - size;
+        if travel <= 0.0 {
+            start + len / 2.0 - size / 2.0
+        } else {
+            start + travel * offset
+        }
+    };
 
     let (x, y) = match edge {
-        "screen-left" => (wa_l, wa_t + (wa_b - wa_t - oh) / 2.0),
-        "screen-right" => (wa_r - ow, wa_t + (wa_b - wa_t - oh) / 2.0),
-        "screen-top" => (wa_l + (wa_r - wa_l - ow) / 2.0, wa_t),
-        "screen-bottom" => (wa_l + (wa_r - wa_l - ow) / 2.0, wa_b - oh),
-        "win-left" => (wl - SNAP_GAP - ow, wt + (wb - wt - oh) / 2.0),
-        "win-right" => (wrr + SNAP_GAP, wt + (wb - wt - oh) / 2.0),
-        "win-top" => (wl + (wrr - wl - ow) / 2.0, wt - SNAP_GAP - oh),
-        "win-bottom" => (wl + (wrr - wl - ow) / 2.0, wb + SNAP_GAP),
+        "screen-left" => (wa_l, along(wa_t, wa_b - wa_t, oh)),
+        "screen-right" => (wa_r - ow, along(wa_t, wa_b - wa_t, oh)),
+        "screen-top" => (along(wa_l, wa_r - wa_l, ow), wa_t),
+        "screen-bottom" => (along(wa_l, wa_r - wa_l, ow), wa_b - oh),
+        "win-left" => (wl - SNAP_GAP - ow, along(wt, wb - wt, oh)),
+        "win-right" => (wrr + SNAP_GAP, along(wt, wb - wt, oh)),
+        "win-top" => (along(wl, wrr - wl, ow), wt - SNAP_GAP - oh),
+        "win-bottom" => (along(wl, wrr - wl, ow), wb + SNAP_GAP),
         _ => return None,
     };
 
@@ -422,6 +437,43 @@ pub fn snapped_position(
     let y_min = wa_t;
     let y_max = (wa_b - oh).max(y_min);
     Some((x.clamp(x_min, x_max), y.clamp(y_min, y_max)))
+}
+
+/// 由悬浮窗当前位置反算沿边方向偏移比例（0~1，越界钳制）。
+///
+/// 与 [snapped_position] 的插值规则对称：垂直边沿水平方向、水平边沿
+/// 垂直方向。拖动结束时调用，把松手位置记忆为偏移。
+pub fn offset_from_position(
+    edge: &str,
+    ox: f64,
+    oy: f64,
+    ow: f64,
+    oh: f64,
+    info: &TargetWindowInfo,
+    scale: f64,
+) -> f64 {
+    let wa = logical_rect(info.work_area, scale);
+    let (wa_l, wa_t, wa_r, wa_b) = (wa.0, wa.1, wa.2, wa.3);
+    let wr = logical_rect(info.rect, scale);
+    let (wl, wt, wrr, wb) = (wr.0, wr.1, wr.2, wr.3);
+
+    // 反算比例：pos 在 [start, start + (len - size)] 内的相对位置
+    let ratio = |pos: f64, start: f64, len: f64, size: f64| -> f64 {
+        let travel = len - size;
+        if travel <= 0.0 {
+            0.5
+        } else {
+            ((pos - start) / travel).clamp(0.0, 1.0)
+        }
+    };
+
+    match edge {
+        "screen-left" | "screen-right" => ratio(oy, wa_t, wa_b - wa_t, oh),
+        "screen-top" | "screen-bottom" => ratio(ox, wa_l, wa_r - wa_l, ow),
+        "win-left" | "win-right" => ratio(oy, wt, wb - wt, oh),
+        "win-top" | "win-bottom" => ratio(ox, wl, wrr - wl, ow),
+        _ => 0.5,
+    }
 }
 
 // ============================================================
@@ -559,7 +611,7 @@ mod tests {
     fn test_snapped_win_right_position() {
         let info = windowed_target();
         // 窗口右缘 1200 + gap 8 = 1208；垂直居中于窗口 300+(500-60)/2=520
-        let (x, y) = snapped_position("win-right", 100.0, 60.0, &info, 1.0).unwrap();
+        let (x, y) = snapped_position("win-right", 100.0, 60.0, 0.5, &info, 1.0).unwrap();
         assert_eq!(x, 1208.0);
         assert_eq!(y, 520.0);
     }
@@ -568,7 +620,7 @@ mod tests {
     fn test_snapped_win_bottom_position() {
         let info = windowed_target();
         // 窗口底 800 + gap 8 = 808；水平居中于窗口 400+(800-100)/2=750
-        let (x, y) = snapped_position("win-bottom", 100.0, 60.0, &info, 1.0).unwrap();
+        let (x, y) = snapped_position("win-bottom", 100.0, 60.0, 0.5, &info, 1.0).unwrap();
         assert_eq!(x, 750.0);
         assert_eq!(y, 808.0);
     }
@@ -577,7 +629,7 @@ mod tests {
     fn test_snapped_screen_bottom_position() {
         let info = maximized_target();
         // 工作区底 1040：贴合（0 间距）；水平居中于工作区 (1920-100)/2=910
-        let (x, y) = snapped_position("screen-bottom", 100.0, 60.0, &info, 1.0).unwrap();
+        let (x, y) = snapped_position("screen-bottom", 100.0, 60.0, 0.5, &info, 1.0).unwrap();
         assert_eq!(x, 910.0);
         assert_eq!(y, 980.0);
     }
@@ -594,14 +646,111 @@ mod tests {
             work_area: (0, 0, 1920, 1040),
         };
         // win-right 目标 x=1908，但钳制到工作区内 x_max=1920-100=1820
-        let (x, _) = snapped_position("win-right", 100.0, 60.0, &info, 1.0).unwrap();
+        let (x, _) = snapped_position("win-right", 100.0, 60.0, 0.5, &info, 1.0).unwrap();
         assert_eq!(x, 1820.0);
     }
 
     #[test]
     fn test_snapped_invalid_edge_returns_none() {
         let info = windowed_target();
-        assert!(snapped_position("diagonal", 100.0, 60.0, &info, 1.0).is_none());
+        assert!(snapped_position("diagonal", 100.0, 60.0, 0.5, &info, 1.0).is_none());
+    }
+
+    // ---- snapped_position 沿边偏移 ----
+
+    #[test]
+    fn test_snapped_win_bottom_offset_interpolation() {
+        let info = windowed_target(); // 窗口 400..1200，宽 800
+        // offset 0：左缘贴窗口左缘
+        let (x0, y) = snapped_position("win-bottom", 100.0, 60.0, 0.0, &info, 1.0).unwrap();
+        assert_eq!(x0, 400.0);
+        assert_eq!(y, 808.0); // 贴合边不变
+        // offset 1：右缘贴窗口右缘（x = 1200 - 100）
+        let (x1, _) = snapped_position("win-bottom", 100.0, 60.0, 1.0, &info, 1.0).unwrap();
+        assert_eq!(x1, 1100.0);
+        // offset 0.25：x = 400 + (800-100)*0.25
+        let (xq, _) = snapped_position("win-bottom", 100.0, 60.0, 0.25, &info, 1.0).unwrap();
+        assert_eq!(xq, 575.0);
+    }
+
+    #[test]
+    fn test_snapped_screen_right_offset_vertical() {
+        let info = maximized_target(); // 工作区 0,0~1920,1040
+        let (_, y0) = snapped_position("screen-right", 100.0, 60.0, 0.0, &info, 1.0).unwrap();
+        assert_eq!(y0, 0.0);
+        let (_, y1) = snapped_position("screen-right", 100.0, 60.0, 1.0, &info, 1.0).unwrap();
+        assert_eq!(y1, 980.0); // 1040 - 60
+    }
+
+    #[test]
+    fn test_snapped_win_edge_offset_clamped_into_projection() {
+        let info = windowed_target();
+        // offset 越界 1.5 也应钳制在窗口投影内（x_max = 1200-100 = 1100）
+        let (x, _) = snapped_position("win-bottom", 100.0, 60.0, 1.5, &info, 1.0).unwrap();
+        assert_eq!(x, 1100.0);
+        // offset 越界 -0.5 钳到窗口左缘
+        let (x2, _) = snapped_position("win-bottom", 100.0, 60.0, -0.5, &info, 1.0).unwrap();
+        assert_eq!(x2, 400.0);
+    }
+
+    #[test]
+    fn test_snapped_centers_when_window_narrower_than_overlay() {
+        let info = TargetWindowInfo {
+            process_name: "app.exe".to_string(),
+            rect: (400, 300, 450, 800), // 窗口投影仅 50 宽，悬浮窗 100
+            is_maximized: false,
+            is_fullscreen: false,
+            monitor_rect: (0, 0, 1920, 1080),
+            work_area: (0, 0, 1920, 1040),
+        };
+        // 投影 < 悬浮窗：居中于窗口投影（400 + 50/2 - 100/2 = 375）
+        let (x, _) = snapped_position("win-bottom", 100.0, 60.0, 0.0, &info, 1.0).unwrap();
+        assert_eq!(x, 375.0);
+    }
+
+    #[test]
+    fn test_snapped_offset_scale_conversion() {
+        // 150% 缩放：物理工作区 0,0~2880,1560 → 逻辑 0,0~1920,1040
+        let info = TargetWindowInfo {
+            process_name: "app.exe".to_string(),
+            rect: (600, 450, 1800, 1200), // 逻辑 (400,300,1200,800)
+            is_maximized: false,
+            is_fullscreen: false,
+            monitor_rect: (0, 0, 2880, 1620),
+            work_area: (0, 0, 2880, 1560),
+        };
+        // win-bottom 逻辑：左 400、右 1200-100=1100；offset 0.5 → 750
+        let (x, y) = snapped_position("win-bottom", 100.0, 60.0, 0.5, &info, 1.5).unwrap();
+        assert_eq!(x, 750.0);
+        assert_eq!(y, 808.0); // 800 + 8
+    }
+
+    // ---- offset_from_position ----
+
+    #[test]
+    fn test_offset_from_position_center() {
+        let info = windowed_target();
+        let off = offset_from_position("win-bottom", 750.0, 808.0, 100.0, 60.0, &info, 1.0);
+        assert!((off - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_offset_from_position_edges_and_clamp() {
+        let info = windowed_target();
+        assert_eq!(offset_from_position("win-bottom", 400.0, 808.0, 100.0, 60.0, &info, 1.0), 0.0);
+        assert_eq!(offset_from_position("win-bottom", 1100.0, 808.0, 100.0, 60.0, &info, 1.0), 1.0);
+        // 超出窗口右缘：钳制 1.0
+        assert_eq!(offset_from_position("win-bottom", 2000.0, 808.0, 100.0, 60.0, &info, 1.0), 1.0);
+        // 窗口投影小于悬浮窗：恒 0.5
+        let narrow = TargetWindowInfo {
+            process_name: "app.exe".to_string(),
+            rect: (400, 300, 450, 800),
+            is_maximized: false,
+            is_fullscreen: false,
+            monitor_rect: (0, 0, 1920, 1080),
+            work_area: (0, 0, 1920, 1040),
+        };
+        assert_eq!(offset_from_position("win-bottom", 500.0, 808.0, 100.0, 60.0, &narrow, 1.0), 0.5);
     }
 
     // ---- map_edge_for_target ----
