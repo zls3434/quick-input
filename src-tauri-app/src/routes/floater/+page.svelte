@@ -102,6 +102,17 @@
     background: transparent !important;
     /* 内容决定窗口尺寸：body 不填满视口，由内容撑开以便测量 */
     width: max-content;
+    /* 弹窗不允许出现滚动条（WebView2 overlay 滚动条）：
+       保留 overflow 默认（visible）以保证 tooltip 箭头（绝对定位伪元素）
+       计入 scrollWidth/scrollHeight 测量、且窗口尺寸正确容纳箭头 */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  :global(html::-webkit-scrollbar),
+  :global(body::-webkit-scrollbar) {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   /* ---- tooltip 视觉（与原 Tooltip.svelte 一致） ---- */

@@ -36,6 +36,10 @@
   let lastError = $state<string | null>(null);
   // 悬浮窗布局：vertical（竖向）| horizontal（横向）
   let layout = $state<"vertical" | "horizontal">("vertical");
+  // 布局是否已从配置加载完成：加载前不渲染按钮，避免"横排窗口 + 竖排按钮"
+  // 的错位（layout 初始为 vertical，而窗口几何已按配置设为横排）。
+  let layoutReady = $state(false);
+  let layoutRetries = 0;
   // 悬浮窗透明度百分比（20~100，默认 85；配置持久化；CSS 级视觉实现）
   let overlayOpacityPct = $state(85);
   // 悬浮窗是否置顶（配置持久化）
@@ -55,8 +59,17 @@
       overlayOpacityPct =
         s.opacity !== null ? Math.min(100, Math.max(20, s.opacity)) : 85;
       alwaysOnTop = s.always_on_top !== null ? s.always_on_top : true;
+      layoutReady = true;
     } catch (e) {
+      // 启动竞态兜底：get_overlay_settings 可能在 Rust setup 完成前失败，重试
       console.error("加载悬浮窗设置失败", e);
+      if (layoutRetries < 20) {
+        layoutRetries += 1;
+        setTimeout(() => void loadLayout(), 300);
+      } else {
+        // 重试耗尽：按默认竖排继续渲染（保证功能可用，不阻塞按钮加载）
+        layoutReady = true;
+      }
     }
   }
 
@@ -628,6 +641,15 @@
       <p>暂无快捷按钮</p>
       <p class="hint">编辑 default.toml 添加按钮</p>
     </div>
+  {:else if !layoutReady}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
+        <circle cx="12" cy="12" r="10" stroke-dasharray="30 70" stroke-linecap="round">
+          <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+        </circle>
+      </svg>
+      <p>加载中…</p>
+    </div>
   {:else}
     {#if lastError}
       <div class="error-banner">{lastError}</div>
@@ -765,6 +787,9 @@
     /* 不纵向拉伸：scrollHeight 反映真实内容行数，
        避免高度自适应目标随窗口高度虚高导致死循环 */
     flex: 0 0 auto;
+    /* 横向单行/少行场景不出现滚动条；按钮溢出时由高度自适应承载，
+       避免横排模式出现滚动条（竖排模式保留 overflow-y: auto） */
+    overflow: hidden;
   }
   .layout-horizontal .button-item {
     width: auto;
