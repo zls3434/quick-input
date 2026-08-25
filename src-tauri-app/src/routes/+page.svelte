@@ -102,8 +102,15 @@
   }
 
   // 移动按钮：按下即进入窗口拖动模式
+  // 同时置位拖动会话标志：后端跟随线程暂停重定位，避免与拖动抢位；
+  // 拖动结束（松开左键）由后端按物理按键状态检测复位
+  let userDragPending = $state(false);
   function onMoveDown(e: MouseEvent) {
     e.preventDefault();
+    userDragPending = true;
+    invoke("set_overlay_dragging", { dragging: true }).catch((err) =>
+      console.error("置位拖动标志失败", err),
+    );
     getCurrentWebviewWindow()
       .startDragging()
       .catch((err) => console.error("拖动悬浮窗失败", err));
@@ -434,10 +441,14 @@
     // ---- 几何记忆：拖动/缩放结束后防抖保存位置与尺寸 ----
     // 尺寸使用 innerSize（客户区）：setSize 的参数语义即客户区，
     // 若用 outerSize（含不可见边框）保存/恢复会造成每次重启尺寸漂移。
+    // user_drag 仅在用户拖动会话后为 true（触发后端吸附判定与记忆更新）；
+    // 程序性移动（吸附跟随）触发的 onMoved 不带该标志，仅静默更新几何。
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleSaveGeometry = () => {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
+        const wasUserDrag = userDragPending;
+        userDragPending = false;
         try {
           const [pos, inner, scale] = await Promise.all([
             win.outerPosition(),
@@ -450,6 +461,7 @@
             y: Math.round(pos.y / scale),
             w: Math.round(inner.width / scale),
             h: Math.round(inner.height / scale),
+            userDrag: wasUserDrag,
           });
         } catch (e) {
           console.error("保存悬浮窗几何失败", e);

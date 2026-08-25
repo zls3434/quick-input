@@ -139,3 +139,11 @@ opacity = 85             # 不透明度 30-100（百分比）
 always_on_top = true     # 窗口置顶
 hold_threshold_ms = 1000 # 长按触发回车的时间（毫秒，200-5000，默认 1000）
                          # 范围内松开仅输入不回车，超过后补发回车
+
+# 边缘吸附记忆（按应用 + 布局分别记忆，通常由拖动吸附自动写入）
+# 边值：screen-left/right/top/bottom（吸目标所在显示器边缘，用于全屏/最大化应用）
+#       win-left/right/top/bottom（吸应用窗口外侧边缘，用于窗口化应用，跟随窗口移动）
+# 拖动悬浮窗靠近边缘（40px 内）自动吸附并记忆；拖离边缘自动解除。
+# [overlay.snap_memory."notepad.exe"]
+# horizontal = "win-bottom"
+# vertical = "screen-right"

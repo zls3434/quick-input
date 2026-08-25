@@ -219,7 +219,8 @@ pub fn current_layout(app: &AppHandle) -> String {
         .unwrap_or_else(|| "vertical".to_string())
 }
 
-/// 应用悬浮窗几何：按布局设置尺寸（优先记忆尺寸），并定位到记忆位置或默认位置
+/// 应用悬浮窗几何：按布局设置尺寸（优先记忆尺寸），并按
+/// 吸附记忆位置 > 自由拖动记忆位置 > 默认位置 的优先级定位
 ///
 /// 横向布局的高度此处设为单行高度，前端加载后按按钮行数自适应修正。
 pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
@@ -244,8 +245,9 @@ pub fn apply_overlay_geometry(app: &AppHandle, layout: &str) {
     let (w, h) = overlay.effective_size(layout);
     let _ = win.set_size(tauri::LogicalSize::new(w as f64, h as f64));
 
-    let (x, y) = overlay
-        .saved_position(layout)
+    // 吸附记忆优先：按当前前台目标实时推导吸附位置（目标不可用时回退）
+    let (x, y) = snap_position_now(app, layout, w as f64, h as f64)
+        .or_else(|| overlay.saved_position(layout))
         .unwrap_or_else(|| default_overlay_position(app, layout, w as f64, h as f64));
     // 记忆位置钳制到主屏工作区内：避免配置残留（拖动测试/历史版本把窗口拖出屏幕）
     // 导致恢复超屏位置——超屏透明窗口在 Windows 上会引发 DWM 合成异常（拖动卡顿）
@@ -277,9 +279,364 @@ fn clamp_to_work_area(app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
     (cx, cy)
 }
 
-/// 获取浮层窗口句柄
+/// 获取悬浮窗句柄
 pub fn get_overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(OVERLAY_WINDOW_LABEL)
+}
+
+// ============================================================
+// 边缘吸附
+// ============================================================
+
+/// 用户拖动会话进行中标志：拖动开始时由前端置位；
+/// 结束（左键松开）由跟随线程检测，处理完毕后复位（见 [run_snap_follow]）
+static OVERLAY_DRAGGING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 设置拖动会话标志（前端拖动开始时调用）
+pub fn set_overlay_dragging(dragging: bool) {
+    OVERLAY_DRAGGING.store(dragging, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 左键是否按下（物理状态，跨进程有效）
+#[cfg(target_os = "windows")]
+fn left_button_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    (unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000) != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn left_button_down() -> bool {
+    false
+}
+
+/// 拖动会话结束处理：在恢复跟随之前，同步评估松手位置并更新吸附记忆
+///
+/// 顺序必须"先评估后跟随"，不可颠倒：若先恢复跟随，残留的旧吸附记忆
+/// 会立即把悬浮窗拉回吸附位；随后前端 600ms 防抖保存时读到的又是
+/// "已弹回"的位置，判定恒为命中 → 吸附永远无法通过拖动取消
+/// （即"拖离边缘后弹回、吸附无法解除"缺陷的根因）。
+fn handle_drag_end(app: &AppHandle) {
+    let layout = current_layout(app);
+    match evaluate_drag_snap(app) {
+        DragSnapOutcome::Snapped { process, edge, pos } => {
+            if write_snap_edge(app, &process, &layout, Some(edge)) {
+                move_overlay(app, pos.0, pos.1);
+            }
+        }
+        DragSnapOutcome::Missed { process } => {
+            // 拖离吸附区：清除记忆即解除吸附，悬浮窗停在松手位置
+            let _ = write_snap_edge(app, &process, &layout, None);
+        }
+        DragSnapOutcome::NoTarget => {}
+    }
+}
+
+/// 写入/清除吸附记忆并落盘（无状态/加锁失败/校验失败返回 false）
+fn write_snap_edge(app: &AppHandle, process: &str, layout: &str, edge: Option<&str>) -> bool {
+    let Some(state) = app.try_state::<crate::AppState>() else {
+        return false;
+    };
+    let Ok(mut mgr) = state.config_manager.lock() else {
+        return false;
+    };
+    let config = mgr.config_mut();
+    let overlay = config.overlay.get_or_insert_with(Default::default);
+    overlay.set_snap_edge(process, layout, edge);
+    let probe = config.clone();
+    if probe.validate().is_err() {
+        return false;
+    }
+    mgr.save().is_ok()
+}
+
+/// 按当前前台目标实时推导吸附位置（逻辑坐标）
+///
+/// 读取配置中该目标进程在本布局的吸附边记忆；无记忆或目标不可用时返回 None。
+/// 全屏/最大化目标自动把 win-* 边映射为同朝向 screen-* 边。
+fn snap_position_now(app: &AppHandle, layout: &str, fallback_w: f64, fallback_h: f64) -> Option<(i32, i32)> {
+    let win = get_overlay_window(app)?;
+    let info = crate::target_window::current_target_window()?;
+    let scale = win.scale_factor().ok().unwrap_or(1.0);
+    let (ow, oh) = win
+        .outer_size()
+        .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
+        .unwrap_or((fallback_w, fallback_h));
+    let (x, y) = snap_position_for(app, &info, layout, ow, oh, scale)?;
+    Some((x.round() as i32, y.round() as i32))
+}
+
+/// 由目标状态 + 悬浮窗尺寸计算吸附位置（逻辑坐标；纯计算 + 配置读取）
+///
+/// 与探测解耦：跟随线程传入缓存的目标状态与尺寸即可高频调用，
+/// 不重复探测进程/几何。
+fn snap_position_for(
+    app: &AppHandle,
+    info: &crate::target_window::TargetWindowInfo,
+    layout: &str,
+    ow: f64,
+    oh: f64,
+    scale: f64,
+) -> Option<(f64, f64)> {
+    let overlay = app
+        .try_state::<crate::AppState>()
+        .and_then(|state| {
+            state
+                .config_manager
+                .lock()
+                .ok()
+                .and_then(|mgr| mgr.config().overlay.clone())
+        })?;
+    let edge = overlay.snap_edge(&info.process_name, layout)?;
+    let edge = crate::target_window::map_edge_for_target(&edge, info);
+    crate::target_window::snapped_position(edge, ow, oh, info, scale)
+}
+
+/// 拖动结束后的吸附判定结果
+pub enum DragSnapOutcome {
+    /// 命中吸附：目标进程名、吸附边、吸附后位置（逻辑坐标）
+    Snapped {
+        process: String,
+        edge: &'static str,
+        pos: (i32, i32),
+    },
+    /// 未命中任何吸附点（目标存在）：应清除该进程本布局的吸附记忆
+    Missed { process: String },
+    /// 无可用目标（前台是本应用/探测失败）：不动吸附记忆
+    NoTarget,
+}
+
+/// 拖动结束后评估吸附：读取悬浮窗当前实时几何（外框，逻辑坐标）做判定
+///
+/// 由 `save_overlay_geometry(user_drag=true)` 调用。位置取窗口实时值
+/// 而非前端回传值，保证与物理状态一致。判定本身与布局无关
+/// （横竖排吸附几何一致），布局归属由调用方写入记忆时区分。
+pub fn evaluate_drag_snap(app: &AppHandle) -> DragSnapOutcome {
+    let Some(win) = get_overlay_window(app) else {
+        return DragSnapOutcome::NoTarget;
+    };
+    let Some(info) = crate::target_window::current_target_window() else {
+        return DragSnapOutcome::NoTarget;
+    };
+    let (Ok(pos), Ok(outer), Ok(scale)) = (win.outer_position(), win.outer_size(), win.scale_factor())
+    else {
+        return DragSnapOutcome::NoTarget;
+    };
+    let (ox, oy) = (pos.x as f64 / scale, pos.y as f64 / scale);
+    let (ow, oh) = (outer.width as f64 / scale, outer.height as f64 / scale);
+
+    match crate::target_window::detect_snap_edge(ox, oy, ow, oh, &info, scale) {
+        Some(edge) => match crate::target_window::snapped_position(edge, ow, oh, &info, scale) {
+            Some((x, y)) => DragSnapOutcome::Snapped {
+                process: info.process_name,
+                edge,
+                pos: (x.round() as i32, y.round() as i32),
+            },
+            // 边合法则位置计算必成功；防御性回退
+            None => DragSnapOutcome::Missed {
+                process: info.process_name,
+            },
+        },
+        None => DragSnapOutcome::Missed {
+            process: info.process_name,
+        },
+    }
+}
+
+/// 移动悬浮窗到指定逻辑坐标（保持 Z-order/样式，仅改位置）
+pub fn move_overlay(app: &AppHandle, x: i32, y: i32) {
+    use tauri::LogicalPosition;
+    if let Some(win) = get_overlay_window(app) {
+        let _ = win.set_position(LogicalPosition::new(x, y));
+    }
+}
+
+// ---- 跟随轮询节奏（自适应）----
+// 目标几何变化期间快轮询（接近显示刷新率，跟随近实时无跳变感）；
+// 静止后回落慢轮询。快轮询期间每轮仅微秒级 Win32 调用（无进程探测、
+// 无跨线程代理），CPU 增量可忽略；稳态较旧实现更低（进程探测移出热路径）。
+/// 快轮询间隔（毫秒）：目标几何变化期间生效
+const FOLLOW_ACTIVE_MS: u64 = 8;
+/// 慢轮询间隔（毫秒）：目标静止后生效（与焦点轮询同频）
+const FOLLOW_IDLE_MS: u64 = 150;
+/// 目标静止多久后退回慢轮询
+const FOLLOW_SETTLE_MS: u64 = 250;
+
+/// 直接 SetWindowPos 移动悬浮窗到物理像素坐标
+///
+/// 绕过 Tauri 跨线程事件代理（代理每跳增加至多一个事件循环周期的延迟，
+/// 高频跟随时表现为抖动）；Win32 窗口操作本身线程安全。
+/// 返回是否成功。
+#[cfg(target_os = "windows")]
+fn move_overlay_native(hwnd: isize, x: i32, y: i32) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    let h = HWND(hwnd as *mut std::ffi::c_void);
+    unsafe {
+        SetWindowPos(
+            h,
+            HWND(std::ptr::null_mut()),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    }
+    .is_ok()
+}
+
+/// 解析悬浮窗原生句柄（生命周期内稳定，跟随线程缓存一次即可）
+#[cfg(target_os = "windows")]
+fn overlay_hwnd(app: &AppHandle) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let win = get_overlay_window(app)?;
+    let raw = win.window_handle().ok()?.as_raw();
+    if let RawWindowHandle::Win32(w) = raw {
+        let v = w.hwnd.get() as isize;
+        if v != 0 {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// 吸附跟随线程：自适应轮询，按吸附记忆与目标窗口实时状态重定位悬浮窗
+///
+/// 状态机：
+/// - 拖动会话进行中（标志置位 + 左键按住）：暂停跟随，避免与系统
+///   模态移动循环抢位（DragEnter 循环不向前端派发 mouseup，
+///   故以物理按键状态判定会话结束）
+/// - 拖动会话结束（标志置位 + 左键松开）：先同步评估松手位置并更新
+///   吸附记忆（[handle_drag_end]），再复位标志、恢复跟随
+/// - 目标解析：前台句柄不变时仅增量刷新几何（[refresh_geometry]），
+///   进程名探测仅在前台切换时执行 → 稳态 CPU 趋近于零
+/// - 定位：吸附位置换算为物理像素后直接 SetWindowPos（[move_overlay_native]），
+///   与实际位置一致时不产生任何窗口消息
+/// - 间隔自适应：目标几何变化后 FOLLOW_SETTLE_MS 内快轮询
+///   （FOLLOW_ACTIVE_MS），随后回落 FOLLOW_IDLE_MS
+/// - 应用退出（watcher_stopped）：线程结束
+pub fn run_snap_follow(app: AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::time::{Duration, Instant};
+        use crate::target_window as tw;
+
+        // 目标缓存：前台句柄 + 上次几何状态
+        let mut tracker: Option<(isize, tw::TargetWindowInfo)> = None;
+        // 悬浮窗句柄与 DPI 缓存：句柄稳定；DPI 仅在目标换显示器时刷新
+        let mut ov_hwnd: Option<isize> = None;
+        let mut scale: f64 = 1.0;
+        let mut scale_mon: (i32, i32, i32, i32) = (i32::MIN, 0, 0, 0);
+        // 最近一次"需要快轮询"的事件（目标几何变化 / 本线程移动了悬浮窗）
+        let mut last_change = Instant::now();
+
+        loop {
+            if app
+                .try_state::<crate::AppState>()
+                .map(|s| s.watcher_stopped.load(std::sync::atomic::Ordering::SeqCst))
+                .unwrap_or(true)
+            {
+                break;
+            }
+
+            // ---- 拖动会话状态机（先评估后跟随，顺序不可颠倒）----
+            if OVERLAY_DRAGGING.load(std::sync::atomic::Ordering::SeqCst) {
+                if left_button_down() {
+                    std::thread::sleep(Duration::from_millis(FOLLOW_IDLE_MS));
+                    continue;
+                }
+                handle_drag_end(&app);
+                OVERLAY_DRAGGING.store(false, std::sync::atomic::Ordering::SeqCst);
+                // 会话改写了位置与记忆：丢弃缓存，下轮全量对账
+                tracker = None;
+                last_change = Instant::now();
+            }
+
+            // ---- 目标解析与几何增量刷新 ----
+            if let Some(hwnd) = tw::foreground_hwnd() {
+                if tw::is_self_window(hwnd) {
+                    // 前台是本应用（模板输入弹窗等）：无跟随目标
+                    tracker = None;
+                } else {
+                    match &mut tracker {
+                        Some((t_hwnd, info)) if *t_hwnd == hwnd => {
+                            if tw::refresh_geometry(hwnd, info) {
+                                last_change = Instant::now();
+                            }
+                        }
+                        _ => match tw::probe_target(hwnd) {
+                            Some(info) => {
+                                tracker = Some((hwnd, info));
+                                last_change = Instant::now();
+                            }
+                            None => tracker = None,
+                        },
+                    }
+                }
+            } else {
+                tracker = None;
+            }
+
+            // ---- 吸附定位（有缓存目标才计算；已到位则零开销跳过）----
+            if let Some((_, info)) = &tracker {
+                // 目标换显示器时刷新 DPI 缓存（混合 DPI 多屏）
+                if scale_mon != info.monitor_rect {
+                    if let Some(win) = get_overlay_window(&app) {
+                        scale = win.scale_factor().ok().unwrap_or(1.0);
+                    }
+                    scale_mon = info.monitor_rect;
+                }
+                if ov_hwnd.is_none() {
+                    ov_hwnd = overlay_hwnd(&app);
+                }
+                let mut moved = false;
+                if let Some(h) = ov_hwnd {
+                    let layout = current_layout(&app);
+                    // 尺寸来自实际外框（物理 → 逻辑），免跨线程代理
+                    if let Some((l, t, r, b)) = tw::phys_rect(h) {
+                        let ow = (r - l) as f64 / scale;
+                        let oh = (b - t) as f64 / scale;
+                        if let Some((lx, ly)) = snap_position_for(&app, info, &layout, ow, oh, scale)
+                        {
+                            let (px, py) = ((lx * scale).round() as i32, (ly * scale).round() as i32);
+                            if l != px || t != py {
+                                if move_overlay_native(h, px, py) {
+                                    moved = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if moved {
+                    last_change = Instant::now();
+                }
+            }
+
+            // ---- 自适应间隔：活跃窗口内快轮询，静止后回落 ----
+            let interval = if last_change.elapsed() < Duration::from_millis(FOLLOW_SETTLE_MS) {
+                FOLLOW_ACTIVE_MS
+            } else {
+                FOLLOW_IDLE_MS
+            };
+            std::thread::sleep(Duration::from_millis(interval));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        loop {
+            if app
+                .try_state::<crate::AppState>()
+                .map(|s| s.watcher_stopped.load(std::sync::atomic::Ordering::SeqCst))
+                .unwrap_or(true)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(FOLLOW_IDLE_MS));
+        }
+    }
 }
 
 /// 显示悬浮窗并重申不抢焦点样式
@@ -294,7 +651,7 @@ pub fn show_overlay_with_styles(app: &AppHandle) {
     let _ = apply_overlay_styles(app);
 }
 
-/// 重置悬浮窗位置与大小：清除两布局的记忆几何，恢复默认几何
+/// 重置悬浮窗位置与大小：清除两布局的记忆几何与吸附记忆，恢复默认几何
 ///
 /// 托盘菜单"重置悬浮窗位置和大小"入口。清除记忆后立即应用默认
 /// 位置（屏幕右上角留边距）与默认尺寸。
@@ -302,7 +659,7 @@ pub fn reset_overlay_geometry(app: &AppHandle) {
     if get_overlay_window(app).is_none() {
         return;
     }
-    // 清除记忆几何并保存
+    // 清除记忆几何与吸附记忆并保存
     if let Some(state) = app.try_state::<crate::AppState>() {
         if let Ok(mut mgr) = state.config_manager.lock() {
             if let Some(overlay) = mgr.config_mut().overlay.as_mut() {
@@ -314,6 +671,9 @@ pub fn reset_overlay_geometry(app: &AppHandle) {
                 overlay.horizontal_y = None;
                 overlay.horizontal_w = None;
                 overlay.horizontal_h = None;
+                // 吸附记忆一并清除：否则 apply_overlay_geometry 会按吸附边
+                // 立即把悬浮窗贴回边缘，重置形同无效
+                overlay.snap_memory = None;
             }
             let _ = mgr.save();
         }

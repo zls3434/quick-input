@@ -138,6 +138,24 @@ pub struct OverlaySettings {
     /// 按钮长按触发回车的阈值（毫秒，200~5000，None = 默认 1000）。
     /// 按住超过该时长补发回车；范围内松开仅输入不回车。
     pub hold_threshold_ms: Option<u32>,
+    /// 边缘吸附记忆：按进程名记忆每个应用各布局的吸附边（可选）。
+    /// 键为进程名（如 "notepad.exe"，大小写不敏感匹配），值为该应用
+    /// 横/竖布局各自记忆的吸附边。与画像表独立，任意前台应用均可记忆，
+    /// 无需建立画像。TOML 形如：
+    /// `[overlay.snap_memory."notepad.exe"]` → `horizontal = "win-bottom"`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snap_memory: Option<std::collections::HashMap<String, SnapEdgeSettings>>,
+}
+
+/// 单个应用的吸附边记忆（按布局分别记录）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SnapEdgeSettings {
+    /// 横向布局吸附边（可选，值见 `OverlaySettings::SNAP_EDGES`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal: Option<String>,
+    /// 竖向布局吸附边（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical: Option<String>,
 }
 
 impl OverlaySettings {
@@ -230,6 +248,63 @@ impl OverlaySettings {
             self.vertical_y = Some(y);
             self.vertical_w = Some(w);
             self.vertical_h = Some(h);
+        }
+    }
+
+    // ---- 边缘吸附记忆 ----
+
+    /// 合法吸附边集合：屏幕边（screen-*，目标所在显示器工作区边缘）与
+    /// 应用窗口边（win-*，窗口化目标的外侧边缘）
+    pub const SNAP_EDGES: [&'static str; 8] = [
+        "screen-left",
+        "screen-right",
+        "screen-top",
+        "screen-bottom",
+        "win-left",
+        "win-right",
+        "win-top",
+        "win-bottom",
+    ];
+
+    /// 判断是否为合法吸附边
+    pub fn is_valid_snap_edge(edge: &str) -> bool {
+        Self::SNAP_EDGES.contains(&edge)
+    }
+
+    /// 读取指定进程在某布局的吸附边记忆（进程名大小写不敏感）
+    pub fn snap_edge(&self, process: &str, layout: &str) -> Option<String> {
+        let mem = self.snap_memory.as_ref()?;
+        let entry = mem
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(process))
+            .map(|(_, v)| v)?;
+        if layout == Self::LAYOUT_HORIZONTAL {
+            entry.horizontal.clone()
+        } else {
+            entry.vertical.clone()
+        }
+    }
+
+    /// 记录/清除指定进程在某布局的吸附边记忆。
+    /// edge 为 None 时清除该布局的记忆；清除后条目两布局均为空则删除整条，
+    /// 避免配置残留空表。
+    pub fn set_snap_edge(&mut self, process: &str, layout: &str, edge: Option<&str>) {
+        let mem = self.snap_memory.get_or_insert_with(Default::default);
+        // 大小写不敏感：命中已有键则复用，避免同一进程多条目
+        let key = mem
+            .keys()
+            .find(|k| k.eq_ignore_ascii_case(process))
+            .cloned()
+            .unwrap_or_else(|| process.to_string());
+        let entry = mem.entry(key).or_default();
+        if layout == Self::LAYOUT_HORIZONTAL {
+            entry.horizontal = edge.map(str::to_string);
+        } else {
+            entry.vertical = edge.map(str::to_string);
+        }
+        if entry.horizontal.is_none() && entry.vertical.is_none() {
+            // 条目已空：移除（key 已被 entry 独占借用结束，重新查找）
+            mem.retain(|k, v| !(k.eq_ignore_ascii_case(process) && v.horizontal.is_none() && v.vertical.is_none()));
         }
     }
 }
@@ -404,6 +479,27 @@ impl ConfigFile {
                             OverlaySettings::HOLD_THRESHOLD_MAX_MS
                         ),
                     });
+                }
+            }
+            // 校验吸附记忆的边值合法性（键为进程名，由运行时写入，此处仅校验值）
+            if let Some(mem) = &overlay.snap_memory {
+                for (process, edges) in mem {
+                    for (layout_name, edge) in [
+                        ("horizontal", &edges.horizontal),
+                        ("vertical", &edges.vertical),
+                    ] {
+                        if let Some(e) = edge {
+                            if !OverlaySettings::is_valid_snap_edge(e) {
+                                return Err(ValidationError {
+                                    field: format!("overlay.snap_memory.{process}.{layout_name}"),
+                                    message: format!(
+                                        "吸附边 '{e}' 无效（应为 {} 之一）",
+                                        OverlaySettings::SNAP_EDGES.join(" / ")
+                                    ),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }

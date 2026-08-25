@@ -10,6 +10,7 @@ mod inject_linux;
 mod inject_macos;
 mod inject_windows;
 mod process_list;
+mod target_window;
 mod tray;
 mod window;
 
@@ -475,24 +476,62 @@ fn set_overlay_always_on_top(
 /// 保存悬浮窗几何（位置 + 尺寸；拖动/缩放结束后由前端调用，按布局记忆）
 ///
 /// 横向布局的高度作为下次启动的初始高度缓存，避免启动闪烁与位移。
+///
+/// `user_drag=true`（拖动结束）时执行吸附判定：
+/// - 命中吸附边：记忆该应用本布局的吸附边，位置保存为吸附后位置并立即贴齐
+/// - 未命中（目标存在）：清除吸附记忆（拖离边缘 = 解除吸附）
+/// - 无可用目标（前台为本应用等）：不动吸附记忆
+/// `user_drag=false`（缩放等）仅更新几何，吸附记忆保持，由跟随线程按新尺寸重贴。
 #[tauri::command]
 fn save_overlay_geometry(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     layout: String,
     x: i32,
     y: i32,
     w: i32,
     h: i32,
+    user_drag: Option<bool>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
     let overlay = config.overlay.get_or_insert_with(Default::default);
-    overlay.set_geometry(&layout, x, y, w, h);
+
+    let mut final_x = x;
+    let mut final_y = y;
+    let mut snapped_pos: Option<(i32, i32)> = None;
+    if user_drag.unwrap_or(false) {
+        match window::evaluate_drag_snap(&app) {
+            window::DragSnapOutcome::Snapped { process, edge, pos } => {
+                overlay.set_snap_edge(&process, &layout, Some(edge));
+                final_x = pos.0;
+                final_y = pos.1;
+                snapped_pos = Some(pos);
+            }
+            window::DragSnapOutcome::Missed { process } => {
+                overlay.set_snap_edge(&process, &layout, None);
+            }
+            window::DragSnapOutcome::NoTarget => {}
+        }
+    }
+    overlay.set_geometry(&layout, final_x, final_y, w, h);
     let probe = config.clone();
     probe.validate().map_err(|e| e.to_string())?;
     config.overlay = probe.overlay;
     mgr.save().map_err(|e| e.to_string())?;
+    // 命中吸附：立即贴齐到吸附位置（不等跟随线程的下一轮）
+    if let Some((sx, sy)) = snapped_pos {
+        window::move_overlay(&app, sx, sy);
+    }
     Ok(())
+}
+
+/// 设置悬浮窗拖动会话标志（前端拖动开始时置位；结束由后端按左键状态检测）
+///
+/// 跟随线程在会话期间暂停重定位，避免与系统模态移动循环抢位。
+#[tauri::command]
+fn set_overlay_dragging(dragging: bool) {
+    window::set_overlay_dragging(dragging);
 }
 
 /// 删除一个应用画像
@@ -794,6 +833,7 @@ pub fn run() {
             set_hold_threshold,
             set_overlay_always_on_top,
             save_overlay_geometry,
+            set_overlay_dragging,
             reset_overlay_geometry_command,
             update_profile,
             delete_profile,
@@ -868,6 +908,12 @@ pub fn run() {
             let listener_handle = app.handle().clone();
             std::thread::spawn(move || {
                 run_focus_listener(listener_handle);
+            });
+
+            // 启动吸附跟随线程（150ms 轮询，按吸附记忆跟随目标窗口重定位）
+            let follow_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                window::run_snap_follow(follow_handle);
             });
 
             // 应用系统级置顶/不抢焦点样式

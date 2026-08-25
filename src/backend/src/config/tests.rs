@@ -837,3 +837,146 @@ content = "hello"
     assert_eq!(back, config);
 }
 
+// ============================================================
+// 边缘吸附记忆（snap_memory）
+// ============================================================
+
+use super::model::{OverlaySettings, SnapEdgeSettings};
+
+// 读写：按应用+布局分别记忆，互不干扰
+#[test]
+fn test_snap_edge_set_and_get_per_layout() {
+    let mut ov = OverlaySettings::default();
+    // 无记忆时返回 None
+    assert_eq!(ov.snap_edge("notepad.exe", "horizontal"), None);
+
+    ov.set_snap_edge("notepad.exe", "horizontal", Some("win-bottom"));
+    ov.set_snap_edge("notepad.exe", "vertical", Some("screen-right"));
+    assert_eq!(
+        ov.snap_edge("notepad.exe", "horizontal"),
+        Some("win-bottom".to_string())
+    );
+    assert_eq!(
+        ov.snap_edge("notepad.exe", "vertical"),
+        Some("screen-right".to_string())
+    );
+    // 其他应用不受影响
+    assert_eq!(ov.snap_edge("other.exe", "horizontal"), None);
+}
+
+// 大小写不敏感：读取命中与写入复用已有键
+#[test]
+fn test_snap_edge_case_insensitive() {
+    let mut ov = OverlaySettings::default();
+    ov.set_snap_edge("Notepad.EXE", "horizontal", Some("win-left"));
+    // 读取用不同大小写仍命中
+    assert_eq!(
+        ov.snap_edge("notepad.exe", "horizontal"),
+        Some("win-left".to_string())
+    );
+    // 写入复用已有键，不产生重复条目
+    ov.set_snap_edge("NOTEPAD.exe", "vertical", Some("win-right"));
+    assert_eq!(ov.snap_memory.as_ref().unwrap().len(), 1);
+    let entry = ov
+        .snap_memory
+        .as_ref()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    assert_eq!(entry.horizontal, Some("win-left".to_string()));
+    assert_eq!(entry.vertical, Some("win-right".to_string()));
+}
+
+// 清除单边后另一边保留；两边均清除时条目整体删除
+#[test]
+fn test_snap_edge_clear_semantics() {
+    let mut ov = OverlaySettings::default();
+    ov.set_snap_edge("a.exe", "horizontal", Some("screen-bottom"));
+    ov.set_snap_edge("a.exe", "vertical", Some("win-top"));
+
+    // 清除横排：竖排保留
+    ov.set_snap_edge("a.exe", "horizontal", None);
+    assert_eq!(ov.snap_edge("a.exe", "horizontal"), None);
+    assert_eq!(ov.snap_edge("a.exe", "vertical"), Some("win-top".to_string()));
+    assert_eq!(ov.snap_memory.as_ref().unwrap().len(), 1);
+
+    // 清除竖排：条目整体删除，不留空表
+    ov.set_snap_edge("a.exe", "vertical", None);
+    assert!(ov.snap_memory.as_ref().unwrap().is_empty());
+}
+
+// 非法吸附边被校验拒绝（含字段定位）
+#[test]
+fn test_snap_edge_invalid_value_rejected() {
+    let mut config = create_default_config_fixture();
+    let mut mem = std::collections::HashMap::new();
+    mem.insert(
+        "bad.exe".to_string(),
+        SnapEdgeSettings {
+            horizontal: Some("diagonal".to_string()),
+            vertical: None,
+        },
+    );
+    config.overlay = Some(OverlaySettings {
+        snap_memory: Some(mem),
+        ..Default::default()
+    });
+    let err = config.validate().unwrap_err();
+    assert!(
+        err.field.starts_with("overlay.snap_memory.bad.exe"),
+        "字段定位错误: {}",
+        err.field
+    );
+    assert!(err.message.contains("吸附边"), "错误信息应提及吸附边: {}", err.message);
+}
+
+// 全部合法边值通过校验
+#[test]
+fn test_snap_edge_all_valid_values_accepted() {
+    let mut ov = OverlaySettings::default();
+    for (i, edge) in OverlaySettings::SNAP_EDGES.iter().enumerate() {
+        let layout = if i % 2 == 0 { "horizontal" } else { "vertical" };
+        let process = format!("app{i}.exe");
+        ov.set_snap_edge(&process, layout, Some(edge));
+    }
+    let mut config = create_default_config_fixture();
+    config.overlay = Some(ov);
+    assert!(config.validate().is_ok());
+}
+
+// TOML 往返：snap_memory 嵌套表序列化/反序列化保持一致
+#[test]
+fn test_snap_memory_toml_roundtrip() {
+    let mut ov = OverlaySettings::default();
+    ov.set_snap_edge("notepad.exe", "horizontal", Some("win-bottom"));
+    ov.set_snap_edge("notepad.exe", "vertical", Some("screen-right"));
+    ov.set_snap_edge("game.exe", "vertical", Some("win-right"));
+
+    let mut config = create_default_config_fixture();
+    config.overlay = Some(ov);
+    let out = toml::to_string(&config).unwrap();
+    // TOML 嵌套表名带引号
+    assert!(out.contains("[overlay.snap_memory.\"notepad.exe\"]"), "输出:\n{out}");
+    let back: ConfigFile = toml::from_str(&out).unwrap();
+    assert_eq!(back, config);
+    assert_eq!(
+        back.overlay.unwrap().snap_edge("notepad.exe", "horizontal"),
+        Some("win-bottom".to_string())
+    );
+}
+
+// 旧配置无 snap_memory 字段向后兼容
+#[test]
+fn test_snap_memory_backward_compatible() {
+    let toml_str = r#"
+[overlay]
+layout = "horizontal"
+"#;
+    let config: ConfigFile = toml::from_str(toml_str).unwrap();
+    let ov = config.overlay.unwrap();
+    assert!(ov.snap_memory.is_none());
+    assert_eq!(ov.snap_edge("any.exe", "horizontal"), None);
+}
+
