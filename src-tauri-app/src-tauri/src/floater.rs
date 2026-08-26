@@ -22,6 +22,8 @@ pub enum FloaterKind {
     Tooltip,
     /// 右键菜单：可点击
     Menu,
+    /// 顶栏浮层（悬浮窗上方外侧右对齐）：控制按钮组 + 分组标签
+    Toolbar,
 }
 
 /// 计算浮层窗口左上角位置（纯函数，物理像素，可单测）
@@ -70,6 +72,14 @@ pub fn compute_floater_placement(
                 (wab - h).max(wat)
             }
         }
+        FloaterKind::Toolbar => {
+            // 顶栏：固定悬浮窗上方外侧；空间不足贴工作区顶部
+            if above >= wat {
+                above
+            } else {
+                wat
+            }
+        }
     };
 
     let x = match kind {
@@ -78,6 +88,7 @@ pub fn compute_floater_placement(
             let cx = al + (ar - al) / 2;
             cx - w / 2
         }
+        FloaterKind::Toolbar => ar - w, // 右对齐悬浮窗右缘
     };
 
     // 整体钳制到工作区：保证完整可见（浮层比工作区大时贴左/上）
@@ -203,6 +214,41 @@ pub fn set_floater_click_through(_app: &AppHandle, _enabled: bool) -> Result<(),
     Ok(())
 }
 
+/// 设置浮层窗口不抢焦点（toolbar 用：可点击但不打断当前注入目标焦点）
+#[cfg(target_os = "windows")]
+pub fn set_floater_no_activate(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    };
+
+    let window = get_floater_window(app).ok_or_else(|| "浮层窗口 (floater) 未找到".to_string())?;
+    let handle = window.window_handle().map_err(|e| e.to_string())?;
+    let raw = handle.as_raw();
+    let hwnd = match raw {
+        RawWindowHandle::Win32(w) => HWND(w.hwnd.get() as *mut std::ffi::c_void),
+        _ => return Ok(()),
+    };
+
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let no_activate = WS_EX_NOACTIVATE.0 as isize;
+        let new_ex = if enabled {
+            ex | no_activate
+        } else {
+            ex & !no_activate
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_floater_no_activate(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
 /// 显示浮层（两阶段）：记录锚点与内容 → 触发前端渲染与测量，
 /// 前端上报 `floater_ready` 后定位显示，避免定位闪烁。
 #[tauri::command]
@@ -212,26 +258,37 @@ pub fn show_floater(
     text: Option<String>,
     items: Option<Vec<FloaterMenuItem>>,
     anchor: FloaterAnchor,
+    toolbar: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let fkind = match kind.as_str() {
         "tooltip" => FloaterKind::Tooltip,
         "menu" => FloaterKind::Menu,
+        "toolbar" => FloaterKind::Toolbar,
         _ => return Err(format!("未知浮层类型: {kind}")),
     };
     let overlay = get_overlay_window(&app).ok_or_else(|| "悬浮窗 (overlay) 未找到".to_string())?;
 
-    // 锚点逻辑像素 → 物理像素。前端 getBoundingClientRect 是客户区相对坐标，
-    // 须用客户区原点（inner_position）；若用 outer_position（外框），透明窗口
-    // 的系统边框/阴影（实测左 8px、上 1px）会使浮层整体向左上偏移。
-    let pos = overlay.inner_position().map_err(|e| e.to_string())?;
-    let scale = overlay.scale_factor().map_err(|e| e.to_string())?;
-    let (ox, oy) = (pos.x as f64, pos.y as f64);
-    let anchor_px = (
-        (ox + anchor.x * scale) as i32,
-        (oy + anchor.y * scale) as i32,
-        (ox + (anchor.x + anchor.w) * scale) as i32,
-        (oy + (anchor.y + anchor.h) * scale) as i32,
-    );
+    let anchor_px = if fkind == FloaterKind::Toolbar {
+        // 顶栏锚点 = 悬浮窗窗口矩形（物理像素，不依赖前端锚点）
+        let pos = overlay.inner_position().map_err(|e| e.to_string())?;
+        let size = overlay.inner_size().map_err(|e| e.to_string())?;
+        let (ox, oy) = (pos.x as i32, pos.y as i32);
+        let (w, h) = (size.width as i32, size.height as i32);
+        (ox, oy, ox + w, oy + h)
+    } else {
+        // 锚点逻辑像素 → 物理像素。前端 getBoundingClientRect 是客户区相对坐标，
+        // 须用客户区原点（inner_position）；若用 outer_position（外框），透明窗口
+        // 的系统边框/阴影（实测左 8px、上 1px）会使浮层整体向左上偏移。
+        let pos = overlay.inner_position().map_err(|e| e.to_string())?;
+        let scale = overlay.scale_factor().map_err(|e| e.to_string())?;
+        let (ox, oy) = (pos.x as f64, pos.y as f64);
+        (
+            (ox + anchor.x * scale) as i32,
+            (oy + anchor.y * scale) as i32,
+            (ox + (anchor.x + anchor.w) * scale) as i32,
+            (oy + (anchor.y + anchor.h) * scale) as i32,
+        )
+    };
 
     let work_area = overlay_monitor_work_area(&overlay).unwrap_or((0, 0, 1920, 1040));
 
@@ -244,7 +301,7 @@ pub fn show_floater(
         *slot = Some(fkind);
     }
 
-    let payload = serde_json::json!({ "kind": kind, "text": text, "items": items });
+    let payload = serde_json::json!({ "kind": kind, "text": text, "items": items, "toolbar": toolbar });
     // 双通道投递：事件优先送达（页面已就绪时），PENDING_SHOW 缓存供
     // 页面 onMount 主动 pull 兜底（页面 JS 因后台节流挂起时事件会丢失）。
     {
@@ -272,6 +329,7 @@ pub fn floater_debug() -> String {
         .map(|k| match k {
             FloaterKind::Tooltip => "tooltip",
             FloaterKind::Menu => "menu",
+            FloaterKind::Toolbar => "toolbar",
         })
         .unwrap_or("none");
     format!(
@@ -308,13 +366,17 @@ pub fn floater_ready(app: AppHandle, width: f64, height: f64) -> Result<(), Stri
     let (fx, fy) = ((inner.x - outer.x) as i32, (inner.y - outer.y) as i32);
     floater.set_position(tauri::PhysicalPosition::new(x - fx, y - fy)).map_err(|e| e.to_string())?;
 
-    // tooltip 鼠标穿透 + 不抢焦点；menu 可点击
+    // tooltip 鼠标穿透 + 不抢焦点；menu 可点击；toolbar 可点击但不抢焦点
     set_floater_click_through(&app, pending.kind == FloaterKind::Tooltip)?;
+    if pending.kind == FloaterKind::Toolbar {
+        set_floater_no_activate(&app, true)?;
+    }
 
     floater.show().map_err(|e| e.to_string())?;
 
     // 菜单浮层获得焦点：点击其他窗口/桌面时触发 Focused(false) → 自动关闭。
-    // tooltip 保持不抢焦点（NOACTIVATE）。
+    // tooltip 保持不抢焦点（NOACTIVATE）；toolbar 同样不抢焦点（点击顶栏
+    // 按钮不打断当前注入目标焦点）。
     if pending.kind == FloaterKind::Menu {
         let _ = floater.set_focus();
     }
@@ -356,6 +418,32 @@ pub fn floater_action(app: AppHandle, id: String) -> Result<(), String> {
     hide_floater(app.clone())?;
     app.emit_to("overlay", "floater-menu-action", serde_json::json!({ "id": id }))
         .map_err(|e| e.to_string())
+}
+
+/// 顶栏浮层悬停状态上报（floater 页面鼠标悬停/移出时调用）：
+/// 悬停期间悬浮窗前端取消自动隐藏定时器，移出后恢复延迟隐藏。
+#[tauri::command]
+pub fn floater_hover(app: AppHandle, hovering: bool) -> Result<(), String> {
+    app.emit_to("overlay", "floater-hover", serde_json::json!({ "hovering": hovering }))
+        .map_err(|e| e.to_string())
+}
+
+/// 顶栏浮层分组标签切换：不隐藏浮层，仅转发到悬浮窗前端切换当前分组
+/// （悬浮窗内容变化后浮层保持显示，高亮由浮层页面本地更新）。
+#[tauri::command]
+pub fn floater_tab_switch(app: AppHandle, name: String) -> Result<(), String> {
+    app.emit_to("overlay", "floater-tab-switch", serde_json::json!({ "name": name }))
+        .map_err(|e| e.to_string())
+}
+
+/// 顶栏浮层淡出（自动隐藏前调用）：浮层页面播放淡出动画后自行隐藏。
+/// 与 hide_floater 不同：不立即移走窗口，给前端留出淡出过渡的可视时间。
+#[tauri::command]
+pub fn floater_fade_out(app: AppHandle) -> Result<(), String> {
+    if let Some(floater) = get_floater_window(&app) {
+        let _ = floater.emit("floater://fadeout", ());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

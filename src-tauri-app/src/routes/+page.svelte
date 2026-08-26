@@ -5,6 +5,13 @@
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import Tooltip from "$lib/Tooltip.svelte";
   import { hideFloater, showMenu } from "$lib/floater";
+  import {
+    fadeOutToolbar,
+    isMenuVisible,
+    showToolbar,
+    type ToolbarPayload,
+    type ToolbarTab,
+  } from "$lib/floater";
 
   interface ButtonConfig {
     id: string;
@@ -143,6 +150,61 @@
     getCurrentWebviewWindow()
       .startDragging()
       .catch((err) => console.error("拖动悬浮窗失败", err));
+  }
+
+  // ---- 顶栏外置浮层（控制按钮组 + 分组标签，悬浮窗上方外侧右对齐）----
+  // 浮层由独立透明窗口承载：鼠标移入右上角触发区（右侧 160px × 顶部 40px）
+  // 显示，移出后延迟自动隐藏（浮层悬停期间取消），带淡入淡出效果。
+  let toolbarShown = false; // overlay 侧记录的顶栏浮层显示状态
+  let toolbarHideTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastToolbarShowAt = 0;
+  let toolbarHideCooldownUntil = 0; // 淡出播放期防重入
+  const TOOLBAR_TRIGGER_W = 160;
+  const TOOLBAR_TRIGGER_H = 40;
+  const TOOLBAR_HIDE_DELAY = 900;
+
+  // 构建顶栏载荷：控制状态 + 分组标签（「默认」+ 画像分组，与悬浮窗 Tab 同源）
+  function buildToolbarPayload(): ToolbarPayload {
+    const tabs: ToolbarTab[] = [];
+    if (showDefaultTab) tabs.push({ name: "默认", active: activeGroup === null });
+    for (const g of groups) tabs.push({ name: g.name, active: activeGroup === g.name });
+    return { layout, opacityPct: overlayOpacityPct, alwaysOnTop, tabs };
+  }
+
+  function showToolbarIfNeeded() {
+    if (isMenuVisible()) return; // 右键菜单打开时不覆盖
+    if (Date.now() < toolbarHideCooldownUntil) return; // 淡出冷却期
+    if (toolbarShown && Date.now() - lastToolbarShowAt < 5000) return; // 已显示且未超刷新窗口
+    toolbarShown = true;
+    lastToolbarShowAt = Date.now();
+    showToolbar(buildToolbarPayload());
+  }
+
+  function cancelToolbarHide() {
+    if (toolbarHideTimer) {
+      clearTimeout(toolbarHideTimer);
+      toolbarHideTimer = null;
+    }
+  }
+
+  // 移出触发区：延迟后淡出隐藏（浮层悬停可取消）
+  function scheduleToolbarHide() {
+    cancelToolbarHide();
+    toolbarHideTimer = setTimeout(() => {
+      toolbarHideTimer = null;
+      if (!toolbarShown) return;
+      toolbarShown = false;
+      toolbarHideCooldownUntil = Date.now() + 350; // 淡出播放期防重入
+      fadeOutToolbar();
+    }, TOOLBAR_HIDE_DELAY);
+  }
+
+  // 立即隐藏（失焦/控制动作后浮层已被后端隐藏，仅复位状态）
+  function hideToolbarNow() {
+    cancelToolbarHide();
+    if (!toolbarShown) return;
+    toolbarShown = false;
+    hideFloater();
   }
 
   // 启动竞态重试计数：页面加载可能早于 Rust setup 完成 AppState 管理，
@@ -479,6 +541,68 @@
       if (btn && isTemplateBtn(btn)) showTemplateDialog(btn);
     });
 
+    // ---- 顶栏外置浮层：触发区显示 + 自动隐藏 + 动作分发 ----
+
+    // 鼠标在悬浮窗内移动：右上角触发区显示顶栏，其余区域启动延迟隐藏
+    const handleOverlayMouseMove = (e: MouseEvent) => {
+      const inTrigger =
+        e.clientX > window.innerWidth - TOOLBAR_TRIGGER_W && e.clientY < TOOLBAR_TRIGGER_H;
+      if (inTrigger) {
+        cancelToolbarHide();
+        showToolbarIfNeeded();
+      } else {
+        scheduleToolbarHide();
+      }
+    };
+    window.addEventListener("mousemove", handleOverlayMouseMove, { passive: true });
+
+    // 鼠标离开悬浮窗窗口（移向桌面/其他窗口/顶栏浮层）：启动延迟隐藏。
+    // 浮层悬停期间 overlay 收不到 mousemove，须靠 mouseout 兜底；
+    // 浮层自身的 hover 上报（floater-hover）会取消该定时器。
+    const handleOverlayMouseOut = (e: MouseEvent) => {
+      const rt = e.relatedTarget as Node | null;
+      if (!rt || !document.contains(rt)) scheduleToolbarHide();
+    };
+    window.addEventListener("mouseout", handleOverlayMouseOut);
+
+    // 顶栏控制动作分发（与菜单共用 floater-menu-action 通道，Rust 已先隐藏浮层）：
+    // toolbar:* 前缀在此处理，按钮菜单 id（按钮 id）由上方 unlistenMenuAction 处理
+    const unlistenToolbarAction = listen<{ id: string }>("floater-menu-action", (e) => {
+      const id = e.payload.id;
+      if (id === "toolbar:hide") {
+        hideToolbarNow();
+        hideOverlay();
+      } else if (id === "toolbar:layout") {
+        hideToolbarNow();
+        void toggleLayout();
+      } else if (id === "toolbar:opacity") {
+        hideToolbarNow();
+        void cycleOpacity();
+      } else if (id === "toolbar:topmost") {
+        hideToolbarNow();
+        void toggleAlwaysOnTop();
+      } else if (id === "toolbar:move") {
+        hideToolbarNow();
+        // 浮层已隐藏，直接执行拖动逻辑（startDragging 为 Tauri API，无需原生事件）
+        onMoveDown(new MouseEvent("mousedown"));
+      }
+    });
+
+    // 顶栏分组标签切换：浮层保持显示，仅切换悬浮窗当前分组
+    const unlistenTabSwitch = listen<{ name: string }>("floater-tab-switch", (e) => {
+      activeGroup = e.payload.name === "默认" ? null : e.payload.name;
+    });
+
+    // 浮层悬停状态：悬停取消自动隐藏定时器，移出恢复延迟隐藏
+    const unlistenHover = listen<{ hovering: boolean }>("floater-hover", (e) => {
+      if (e.payload.hovering) cancelToolbarHide();
+      else scheduleToolbarHide();
+    });
+
+    // 悬浮窗失焦（点击其他窗口/桌面）：立即隐藏顶栏
+    const handleOverlayBlur = () => hideToolbarNow();
+    window.addEventListener("blur", handleOverlayBlur);
+
     const win = getCurrentWebviewWindow();
 
     // ---- 几何记忆：拖动/缩放结束后防抖保存位置与尺寸 ----
@@ -561,13 +685,21 @@
 
     return () => {
       if (holdTimer) clearTimeout(holdTimer);
+      cancelToolbarHide();
       window.removeEventListener("mousedown", blockFocusSteal, true);
       window.removeEventListener("contextmenu", handleContextMenu, true);
       window.removeEventListener("mousedown", handleRightDown, true);
       window.removeEventListener("click", closeMenuOnClick);
+      window.removeEventListener("mousemove", handleOverlayMouseMove);
+      window.removeEventListener("mouseout", handleOverlayMouseOut);
+      window.removeEventListener("blur", handleOverlayBlur);
       hideFloater();
       removeTemplateDialog();
       unlisten.then((fn) => fn());
+      unlistenMenuAction.then((fn) => fn());
+      unlistenToolbarAction.then((fn) => fn());
+      unlistenTabSwitch.then((fn) => fn());
+      unlistenHover.then((fn) => fn());
       unlistenMoved.then((fn) => fn());
       unlistenResized.then((fn) => fn());
       unlistenResizedAdjust.then((fn) => fn());
@@ -585,90 +717,8 @@
   class:layout-horizontal={layout === "horizontal"}
   style="opacity: {overlayOpacityPct / 100}"
 >
-  <!-- 右上角浮动控制按钮条（左→右）：隐藏 / 布局切换 / 透明度 / 置顶 / 移动 -->
-  <div class="ctrl-bar">
-    <button
-      class="ctrl-btn ctrl-hide"
-      title="隐藏悬浮窗（托盘或全局热键唤回）"
-      aria-label="隐藏悬浮窗"
-      onclick={hideOverlay}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
-        <path d="M3 10s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
-        <circle cx="12" cy="10" r="2.5" />
-        <path d="M4 20L20 4" />
-      </svg>
-    </button>
-    <button
-      class="ctrl-btn ctrl-layout"
-      title="切换横竖布局（当前：{layout === 'vertical' ? '竖向' : '横向'}）"
-      aria-label="切换横竖布局"
-      onclick={toggleLayout}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
-        <rect x="3" y="6" width="10" height="12" rx="1.5" />
-        <path d="M16 9h4M18 7l-2 2 2 2" />
-        <path d="M16 15h4M18 13l-2 2 2 2" />
-      </svg>
-    </button>
-    <button
-      class="ctrl-btn ctrl-opacity"
-      class:is-dimmed={overlayOpacityPct <= 30}
-      title="透明度 {overlayOpacityPct}%（点击切换）"
-      aria-label="切换透明度"
-      onclick={cycleOpacity}
-    >
-      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" width="13" height="13" fill="none">
-        <circle cx="12" cy="12" r="8" />
-        <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" />
-      </svg>
-    </button>
-    <button
-      class="ctrl-btn ctrl-topmost"
-      class:is-active={alwaysOnTop}
-      title="{alwaysOnTop ? '已置顶' : '未置顶'}（点击切换）"
-      aria-label="切换置顶"
-      onclick={toggleAlwaysOnTop}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
-        <path d="M9 3h6" />
-        <path d="M10 3v5l-3 4h10l-3-4V3" />
-        <path d="M12 12v9" />
-      </svg>
-    </button>
-    <button
-      class="ctrl-btn ctrl-move"
-      title="按住拖动悬浮窗"
-      aria-label="移动悬浮窗"
-      onmousedown={onMoveDown}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13">
-        <path d="M12 3v18M3 12h18" />
-        <path d="M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" />
-      </svg>
-    </button>
-  </div>
-
-  <!-- 分组 Tab 标签浮层（右上角，控制按钮组左侧，与按钮组样式同步） -->
-  {#if showTabs}
-    <div class="tab-bar">
-      {#if showDefaultTab}
-        <button
-          class="tab-item"
-          class:active={activeGroup === null}
-          onclick={() => (activeGroup = null)}
-        >默认</button>
-      {/if}
-      {#each groups as g (g.name)}
-        <button
-          class="tab-item"
-          class:active={activeGroup === g.name}
-          onclick={() => (activeGroup = g.name)}
-        >{g.name}</button>
-      {/each}
-    </div>
-  {/if}
-
+  <!-- 顶栏（控制按钮组 + 分组标签）已外置为悬浮窗上方外侧浮层，
+       鼠标靠近右上角触发显示，见 $lib/floater.ts showToolbar -->
   {#if loading}
     <div class="empty-state">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
@@ -773,59 +823,7 @@
     transition: opacity 0.15s ease;
   }
 
-  /* 右上角浮动控制按钮条（不占布局空间，覆盖于内容之上） */
-  .ctrl-bar {
-    position: absolute;
-    top: 3px;
-    right: 5px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    z-index: 10;
-    /* 平时低调悬浮，悬停时完全显示 */
-    opacity: 0.55;
-    transition: opacity 0.15s ease;
-  }
-  .ctrl-bar:hover {
-    opacity: 1;
-  }
-  .ctrl-btn {
-    width: 20px;
-    height: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: none;
-    border-radius: 5px;
-    background: rgba(40, 40, 44, 0.85);
-    color: #9a9a9a;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .ctrl-btn:hover {
-    background: rgba(255, 255, 255, 0.14);
-    color: #ddd;
-  }
-  .ctrl-btn svg {
-    pointer-events: none; /* 保证整按钮命中区域 */
-  }
-  .ctrl-move {
-    cursor: grab;
-  }
-  .ctrl-move:active {
-    cursor: grabbing;
-  }
-  /* 透明度按钮：处于半透明状态时高亮提示 */
-  .ctrl-opacity.is-dimmed {
-    background: rgba(122, 184, 255, 0.22);
-    color: #7ab8ff;
-  }
-  /* 置顶按钮：置顶激活态高亮 */
-  .ctrl-topmost.is-active {
-    background: rgba(122, 184, 255, 0.22);
-    color: #7ab8ff;
-  }
+  /* 右上角控制按钮条已外置为顶栏浮层（见 floater/+page.svelte），此处不再定义 */
 
   .button-list {
     flex: 1;
@@ -965,47 +963,7 @@
     border-radius: 2px;
   }
 
-  /* 分组 Tab 标签栏（悬浮窗顶部，仅存在画像分组时渲染） */
-  /* 分组 Tab 标签浮层：右上角（控制按钮组左侧），与按钮组样式同步，右侧分隔符隔开 */
-  .tab-bar {
-    position: absolute;
-    top: 3px;
-    right: 122px; /* 让出右上角控制按钮区 + 分隔符 */
-    z-index: 9;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 6px 0 4px;
-    border-right: 1px solid rgba(255, 255, 255, 0.14); /* 与控制按钮组分隔 */
-    overflow-x: auto;
-    scrollbar-width: none;
-    max-width: calc(100% - 130px);
-  }
-  .tab-bar::-webkit-scrollbar {
-    display: none;
-  }
-  .tab-item {
-    flex: 0 0 auto;
-    padding: 2px 9px;
-    border: none;
-    border-radius: 5px;
-    background: rgba(40, 40, 44, 0.85); /* 与按钮组/控制按钮同款深色 */
-    color: #9a9a9a;
-    font-size: 11px;
-    line-height: 1.4;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-    -webkit-app-region: no-drag;
-  }
-  .tab-item:hover {
-    background: rgba(255, 255, 255, 0.14);
-    color: #ddd;
-  }
-  .tab-item.active {
-    background: rgba(122, 162, 247, 0.22);
-    color: #7ab8ff;
-  }
+  /* 分组 Tab 标签已外置为顶栏浮层（见 floater/+page.svelte），此处不再定义 */
 
   .button-item {
     display: flex;

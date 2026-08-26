@@ -32,7 +32,8 @@ use tauri_plugin_dialog::DialogExt;
 use tray::setup_tray;
 use window::apply_overlay_styles;
 use floater::{
-    floater_action, floater_debug, floater_pull_pending, floater_ready, hide_floater, show_floater,
+    floater_action, floater_debug, floater_fade_out, floater_hover, floater_pull_pending,
+    floater_ready, floater_tab_switch, hide_floater, show_floater,
 };
 
 /// Tauri 应用状态
@@ -958,6 +959,9 @@ pub fn run() {
             floater_action,
             floater_pull_pending,
             floater_debug,
+            floater_hover,
+            floater_tab_switch,
+            floater_fade_out,
         ])
         // 浮层页面加载完成后：先应用样式与几何，再显示窗口。
         // 窗口初始隐藏（tauri.conf.json visible:false）以避免 WebView2 内容未就绪时
