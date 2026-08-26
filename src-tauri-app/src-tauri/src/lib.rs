@@ -87,15 +87,24 @@ fn get_buttons(state: tauri::State<AppState>) -> Result<ButtonsView, String> {
             default_buttons: profile.buttons.clone(),
         });
     }
-    // 未命中画像：回退默认映射/默认按钮，无分组视图（前端不渲染 Tab）
+    // 未命中画像：回退默认映射/默认按钮，按按钮 group 字段聚合分组视图
+    // （全局/默认按钮的分组同样驱动悬浮窗 Tab，语义与画像分组一致）
     let btns = if !config.default_buttons.is_empty() {
         &config.default_buttons
     } else {
         &config.buttons
     };
+    let (groups, ungrouped) =
+        quickinput_config::config::model::AppProfile::regroup(btns.clone());
     Ok(ButtonsView {
-        groups: vec![],
-        default_buttons: btns.clone(),
+        groups: groups
+            .into_iter()
+            .map(|g| GroupView {
+                name: g.name,
+                buttons: g.buttons,
+            })
+            .collect(),
+        default_buttons: ungrouped,
     })
 }
 

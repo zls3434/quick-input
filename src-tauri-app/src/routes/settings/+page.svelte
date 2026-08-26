@@ -141,6 +141,21 @@
   let activeTab = $state<"buttons" | "profiles" | "overlay">("buttons");
   let error = $state<string | null>(null);
 
+  // 默认按钮按分组归类（group 字段为空归「未分组」；保持按钮原有顺序）
+  const groupedButtons = $derived.by(() => {
+    const out: { name: string | null; items: ButtonConfig[] }[] = [];
+    for (const b of buttons) {
+      const g = (b.group ?? "").trim() || null;
+      const last = out[out.length - 1];
+      if (last && last.name === g) {
+        last.items.push(b);
+      } else {
+        out.push({ name: g, items: [b] });
+      }
+    }
+    return out;
+  });
+
   // 悬浮窗布局状态
   let overlayLayout = $state<"vertical" | "horizontal">("vertical");
   let layoutSaving = $state(false);
@@ -785,21 +800,27 @@
       </div>
 
       <div class="button-list">
-        {#each buttons as btn (btn.id)}
-          <div class="button-row">
-            <div class="button-info">
-              <span class="btn-label">{btn.label}</span>
-              <span class="btn-id">{btn.id}</span>
-              <span class="btn-content">{btn.content}</span>
-              {#if btn.comment}
-                <span class="btn-comment">{btn.comment}</span>
-              {/if}
-            </div>
-            <div class="button-actions">
-              <button class="btn-edit" onclick={() => startEdit(btn)}>编辑</button>
-              <button class="btn-delete" onclick={() => deleteBtn(btn.id)}>删除</button>
-            </div>
+        {#each groupedButtons as grp, gi (gi)}
+          <div class="group-header">
+            <span class="group-name">{grp.name ?? "未分组"}</span>
+            <span class="group-count">{grp.items.length} 个</span>
           </div>
+          {#each grp.items as btn (btn.id)}
+            <div class="button-row">
+              <div class="button-info">
+                <span class="btn-label">{btn.label}</span>
+                <span class="btn-id">{btn.id}</span>
+                <span class="btn-content">{btn.content}</span>
+                {#if btn.comment}
+                  <span class="btn-comment">{btn.comment}</span>
+                {/if}
+              </div>
+              <div class="button-actions">
+                <button class="btn-edit" onclick={() => startEdit(btn)}>编辑</button>
+                <button class="btn-delete" onclick={() => deleteBtn(btn.id)}>删除</button>
+              </div>
+            </div>
+          {/each}
         {/each}
       </div>
     {:else if activeTab === "profiles"}
@@ -827,7 +848,12 @@
           <div class="button-row">
             <div class="button-info">
               <span class="btn-label">{p.name || p.process_name}</span>
-              <span class="btn-id">{p.name ? p.process_name : ""} {p.buttons.length} 个按钮</span>
+              <span class="btn-id">
+                {p.name ? p.process_name : ""} {p.buttons.length} 个按钮
+                {#if p.buttons.some((b) => (b.group ?? "").trim())}
+                  · 分组: {[...new Set(p.buttons.map((b) => (b.group ?? "").trim()).filter(Boolean))].join(" / ")}
+                {/if}
+              </span>
             </div>
             <div class="button-actions">
               {#if p.inject_mode === "keystroke"}
@@ -1977,6 +2003,25 @@
   }
   .button-row:hover {
     background: rgba(255,255,255,0.06);
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 2px 4px;
+  }
+  .group-header:first-child {
+    margin-top: 2px;
+  }
+  .group-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #7ab8ff;
+  }
+  .group-count {
+    font-size: 11px;
+    color: #666;
   }
 
   .button-info {
