@@ -48,19 +48,55 @@ struct AppState {
     focus_events: std::sync::atomic::AtomicU64,
 }
 
-/// 获取当前配置的按钮列表（按当前活动进程匹配）
+/// 悬浮窗按钮分组视图：分组 Tab + 默认分组按钮
+#[derive(serde::Serialize)]
+struct GroupView {
+    name: String,
+    buttons: Vec<ButtonConfig>,
+}
+
+/// 悬浮窗按钮视图：groups 非空时前端渲染 Tab 栏；
+/// default_buttons 为未分组按钮（「默认」标签内容）。
+#[derive(serde::Serialize)]
+struct ButtonsView {
+    groups: Vec<GroupView>,
+    default_buttons: Vec<ButtonConfig>,
+}
+
+/// 获取当前配置的按钮分组视图（按当前活动进程匹配）
 #[tauri::command]
-fn get_buttons(state: tauri::State<AppState>) -> Result<Vec<quickinput_config::config::model::ButtonConfig>, String> {
+fn get_buttons(state: tauri::State<AppState>) -> Result<ButtonsView, String> {
     let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let process = state.current_process.lock().map_err(|e| e.to_string())?;
-    // 按进程匹配，无匹配回退默认
-    let buttons = mgr
-        .config()
-        .get_buttons_current(&process)
+    let config = mgr.config();
+    // 命中画像：悬浮窗 Tab 依据画像自定义分组；画像 buttons 为默认分组
+    if let Some(profile) = config
+        .profiles
         .iter()
-        .cloned()
-        .collect();
-    Ok(buttons)
+        .find(|p| p.process_name.eq_ignore_ascii_case(&process))
+    {
+        return Ok(ButtonsView {
+            groups: profile
+                .groups
+                .iter()
+                .map(|g| GroupView {
+                    name: g.name.clone(),
+                    buttons: g.buttons.clone(),
+                })
+                .collect(),
+            default_buttons: profile.buttons.clone(),
+        });
+    }
+    // 未命中画像：回退默认映射/默认按钮，无分组视图（前端不渲染 Tab）
+    let btns = if !config.default_buttons.is_empty() {
+        &config.default_buttons
+    } else {
+        &config.buttons
+    };
+    Ok(ButtonsView {
+        groups: vec![],
+        default_buttons: btns.clone(),
+    })
 }
 
 /// 调试：返回画像切换内部状态（当前进程名与已收到的前台事件数）
@@ -198,6 +234,7 @@ fn add_button(
     label: String,
     content: String,
     comment: Option<String>,
+    group: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
@@ -211,6 +248,7 @@ fn add_button(
         label,
         content,
         comment,
+        group,
         ..Default::default()
     });
     probe.validate().map_err(|e| e.to_string())?;
@@ -229,6 +267,7 @@ fn update_button(
     label: String,
     content: String,
     comment: Option<String>,
+    group: Option<String>,
 ) -> Result<(), String> {
     let mut mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
     let config = mgr.config_mut();
@@ -242,6 +281,7 @@ fn update_button(
     btn.label = label;
     btn.content = content;
     btn.comment = comment;
+    btn.group = group;
     probe.validate().map_err(|e| e.to_string())?;
     config.buttons = probe.buttons;
     mgr.save().map_err(|e| e.to_string())?;
@@ -272,11 +312,16 @@ fn delete_button(
     Ok(())
 }
 
-/// 获取所有应用画像（供设置窗口编辑）
+/// 获取所有应用画像（供设置窗口编辑；groups 已展平进 buttons 并携带 group 值）
 #[tauri::command]
 fn get_profiles(state: tauri::State<AppState>) -> Result<Vec<AppProfile>, String> {
     let mgr = state.config_manager.lock().map_err(|e| e.to_string())?;
-    Ok(mgr.config().profiles.clone())
+    let mut profiles = mgr.config().profiles.clone();
+    for p in &mut profiles {
+        p.buttons = p.flattened_buttons();
+        p.groups = vec![];
+    }
+    Ok(profiles)
 }
 
 /// 默认映射数据（按钮列表 + 注入模式），供设置窗口编辑回显
@@ -340,12 +385,14 @@ fn add_profile(
     }
     // 先在副本上修改并校验，校验通过后才应用到实际配置
     let mut probe = config.clone();
+    // 存储前归一化：按按钮 group 值聚合为分组 + 未分组
+    let (groups, buttons) = AppProfile::regroup(buttons);
     probe.profiles.push(AppProfile {
         process_name,
         name,
         buttons,
         inject_mode,
-        groups: vec![],
+        groups,
     });
     probe.validate().map_err(|e| e.to_string())?;
     config.profiles = probe.profiles;
@@ -375,7 +422,10 @@ fn update_profile(
         .ok_or_else(|| "进程映射不存在".to_string())?;
     profile.process_name = process_name;
     profile.name = name;
+    // 存储前归一化：按按钮 group 值聚合为分组 + 未分组
+    let (groups, buttons) = AppProfile::regroup(buttons);
     profile.buttons = buttons;
+    profile.groups = groups;
     profile.inject_mode = inject_mode;
     probe.validate().map_err(|e| e.to_string())?;
     config.profiles = probe.profiles;
