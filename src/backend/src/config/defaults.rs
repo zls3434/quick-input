@@ -391,6 +391,11 @@ mod tests {
             !parsed.buttons.is_empty(),
             "config.example.toml 应包含全局按钮"
         );
+        // 示例应演示画像自定义分组（[[profiles.groups]] 嵌套）
+        assert!(
+            parsed.profiles.iter().any(|p| !p.groups.is_empty()),
+            "config.example.toml 应包含画像分组示例"
+        );
         // 示例应演示 {input} 模板占位符
         assert!(
             parsed

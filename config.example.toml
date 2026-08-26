@@ -10,6 +10,14 @@
 #   content = 注入的文本内容，支持 {input} 占位符（见下）
 #   comment = 悬浮提示说明（可省略）
 #
+# ─── 分组与 Tab 标签 ────────────────────────────────────────
+# 应用画像可定义自定义分组（[[profiles.groups]]），悬浮窗顶部据此显示
+# Tab 标签，点击切换按钮组；未分组按钮（[[profiles.buttons]]）归「默认」标签，
+# 仅当画像定义了分组且存在未分组按钮时显示「默认」标签。
+# 画像未定义分组时悬浮窗不显示 Tab（保持单列表）。
+# 按钮级 group 字段（[[buttons]] group = "..."）仅用于设置界面分组管理，
+# 不产生悬浮窗分组。
+#
 # ─── {input} 模板占位符 ────────────────────────────────────
 # content 中包含 {input} 即为模板按钮（位置任意，不依赖引号）：
 #   左键：占位符不输出，其余内容原样注入，光标自动停在占位符位置
@@ -95,41 +103,73 @@ default_buttons = [
 process_name = "WindowsTerminal.exe"
 name = "终端"
 
-[[profiles.buttons]]
+# 画像自定义分组：悬浮窗顶部按组显示 Tab 标签（Git / Linux / 运维 / 默认）
+[[profiles.groups]]
+name = "Git"
+[[profiles.groups.buttons]]
 id = "git-status"
 label = "Git Status"
 content = "git status"
 comment = "查看工作区状态"
 
-[[profiles.buttons]]
+[[profiles.groups.buttons]]
 id = "git-commit"
 label = "Git Commit"
 content = "git commit -m \"{input}\""
 comment = "提交（{input} 为模板位：左键光标停在此处，右键模板输入）"
 
-[[profiles.buttons]]
+[[profiles.groups.buttons]]
 id = "git-checkout"
 label = "Git Checkout"
 content = "git checkout -b {input}"
 comment = "新建并切换分支（{input} 填分支名）"
 
-[[profiles.buttons]]
+[[profiles.groups]]
+name = "Linux"
+[[profiles.groups.buttons]]
 id = "linux-tail"
 label = "tail -f"
 content = "tail -f {input}"
 comment = "实时查看日志（{input} 填文件路径）"
 
-[[profiles.buttons]]
+[[profiles.groups.buttons]]
 id = "linux-curl"
 label = "curl -s"
 content = "curl -s {input}"
 comment = "发起请求（{input} 填 URL）"
 
-[[profiles.buttons]]
+[[profiles.groups.buttons]]
 id = "linux-kill"
 label = "kill -9"
 content = "kill -9 {input}"
 comment = "强制结束进程（{input} 填 PID）"
+
+[[profiles.groups]]
+name = "运维"
+[[profiles.groups.buttons]]
+id = "docker-ps"
+label = "Docker PS"
+content = "docker ps"
+comment = "列出运行中的容器"
+
+[[profiles.groups.buttons]]
+id = "tail-log"
+label = "Tail Log"
+content = "tail -f app.log"
+comment = "实时查看日志"
+
+# 未分组按钮：归「默认」标签（画像定义分组且存在未分组按钮时显示）
+[[profiles.buttons]]
+id = "pwd"
+label = "pwd"
+content = "pwd"
+comment = "显示当前目录（未分组示例，归「默认」标签）"
+
+[[profiles.buttons]]
+id = "history"
+label = "history"
+content = "history | tail -20"
+comment = "最近 20 条命令记录（未分组示例，归「默认」标签）"
 
 [[profiles]]
 process_name = "Code.exe"
