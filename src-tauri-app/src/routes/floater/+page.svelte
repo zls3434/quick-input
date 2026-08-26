@@ -155,7 +155,23 @@
     onmouseenter={() => reportHover(true)}
     onmouseleave={() => reportHover(false)}
   >
-    <!-- 控制按钮组（隐藏 / 布局 / 透明度 / 置顶 / 移动） -->
+    <!-- 分组标签组（左侧） -->
+    {#if toolbar.tabs.length > 0}
+      <div class="tb-tabs">
+        {#each toolbar.tabs as tab}
+          <button
+            class="tb-tab"
+            class:active={tab.active}
+            onclick={() => switchTab(tab.name)}
+          >{tab.name}</button>
+        {/each}
+      </div>
+    {/if}
+    <!-- 分隔符 -->
+    {#if toolbar.tabs.length > 0}
+      <div class="tb-sep" aria-hidden="true"></div>
+    {/if}
+    <!-- 控制按钮组（右侧，隐藏 / 布局 / 透明度 / 置顶 / 移动） -->
     <div class="tb-ctrl">
       <button
         class="tb-btn"
@@ -221,18 +237,6 @@
         </svg>
       </button>
     </div>
-    {#if toolbar.tabs.length > 0}
-      <div class="tb-sep" aria-hidden="true"></div>
-      <div class="tb-tabs">
-        {#each toolbar.tabs as tab}
-          <button
-            class="tb-tab"
-            class:active={tab.active}
-            onclick={() => switchTab(tab.name)}
-          >{tab.name}</button>
-        {/each}
-      </div>
-    {/if}
   </div>
 {/if}
 
@@ -328,16 +332,15 @@
     color: #888;
   }
 
-  /* ---- 顶栏浮层视觉（与悬浮窗内控制按钮/分组标签同款深色胶囊） ---- */
+  /* ---- 顶栏浮层视觉（与悬浮窗本体同款深色胶囊，无边框无阴影，
+        避免透明窗口上出现多层边框/晕圈） ---- */
   .toolbar {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 6px;
     background: rgba(28, 28, 30, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 10px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     /* 淡入：每次显示播放；淡出由 .fading 状态驱动 transition */
     opacity: 1;
     animation: tb-fade-in 0.18s ease;
