@@ -649,6 +649,26 @@
     </button>
   </div>
 
+  <!-- 分组 Tab 标签浮层（右上角，控制按钮组左侧，与按钮组样式同步） -->
+  {#if showTabs}
+    <div class="tab-bar">
+      {#if showDefaultTab}
+        <button
+          class="tab-item"
+          class:active={activeGroup === null}
+          onclick={() => (activeGroup = null)}
+        >默认</button>
+      {/if}
+      {#each groups as g (g.name)}
+        <button
+          class="tab-item"
+          class:active={activeGroup === g.name}
+          onclick={() => (activeGroup = g.name)}
+        >{g.name}</button>
+      {/each}
+    </div>
+  {/if}
+
   {#if loading}
     <div class="empty-state">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
@@ -688,24 +708,6 @@
       <div class="error-banner">{lastError}</div>
     {/if}
     <div class="button-list">
-      {#if showTabs}
-        <div class="tab-bar">
-          {#if showDefaultTab}
-            <button
-              class="tab-item"
-              class:active={activeGroup === null}
-              onclick={() => (activeGroup = null)}
-            >默认</button>
-          {/if}
-          {#each groups as g (g.name)}
-            <button
-              class="tab-item"
-              class:active={activeGroup === g.name}
-              onclick={() => (activeGroup = g.name)}
-            >{g.name}</button>
-          {/each}
-        </div>
-      {/if}
       {#if visibleButtons.length === 0}
         <div class="empty-state">
           <p>暂无快捷按钮</p>
@@ -964,41 +966,45 @@
   }
 
   /* 分组 Tab 标签栏（悬浮窗顶部，仅存在画像分组时渲染） */
+  /* 分组 Tab 标签浮层：右上角（控制按钮组左侧），与按钮组样式同步，右侧分隔符隔开 */
   .tab-bar {
-    flex: 0 0 auto;
+    position: absolute;
+    top: 3px;
+    right: 122px; /* 让出右上角控制按钮区 + 分隔符 */
+    z-index: 9;
     display: flex;
+    align-items: center;
     gap: 4px;
-    padding: 3px 88px 3px 2px; /* 右端避开右上角控制按钮区 */
+    height: 22px;
+    padding: 0 6px 0 4px;
+    border-right: 1px solid rgba(255, 255, 255, 0.14); /* 与控制按钮组分隔 */
     overflow-x: auto;
     scrollbar-width: none;
+    max-width: calc(100% - 130px);
   }
   .tab-bar::-webkit-scrollbar {
     display: none;
   }
   .tab-item {
     flex: 0 0 auto;
-    padding: 2px 10px;
+    padding: 2px 9px;
     border: none;
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(40, 40, 44, 0.85); /* 与按钮组/控制按钮同款深色 */
     color: #9a9a9a;
     font-size: 11px;
+    line-height: 1.4;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     -webkit-app-region: no-drag;
   }
   .tab-item:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.14);
     color: #ddd;
   }
   .tab-item.active {
     background: rgba(122, 162, 247, 0.22);
     color: #7ab8ff;
-  }
-  .layout-horizontal .tab-bar {
-    flex-basis: 100%; /* 横排换行布局中占满整行 */
-    padding-top: 0;
-    padding-bottom: 2px;
   }
 
   .button-item {
