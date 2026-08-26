@@ -211,6 +211,7 @@ fn add_button(
         label,
         content,
         comment,
+        ..Default::default()
     });
     probe.validate().map_err(|e| e.to_string())?;
     config.buttons = probe.buttons;
@@ -344,6 +345,7 @@ fn add_profile(
         name,
         buttons,
         inject_mode,
+        groups: vec![],
     });
     probe.validate().map_err(|e| e.to_string())?;
     config.profiles = probe.profiles;

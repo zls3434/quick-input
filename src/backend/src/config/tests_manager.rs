@@ -23,6 +23,7 @@ fn button(id: &str, content: &str) -> ButtonConfig {
         label: id.to_string(),
         content: content.to_string(),
         comment: None,
+        ..Default::default()
     }
 }
 
@@ -127,6 +128,7 @@ fn test_ac2_3_save_preserves_existing_fields() {
         name: None,
         inject_mode: None,
         buttons: vec![button("p1", "fmt")],
+        groups: vec![],
     });
     mgr.config_mut().buttons = config.buttons.clone();
     mgr.config_mut().profiles = config.profiles.clone();

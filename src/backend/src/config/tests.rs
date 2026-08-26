@@ -11,6 +11,7 @@ fn create_button_fixture(id: &str, label: &str, content: &str) -> ButtonConfig {
         label: label.to_string(),
         content: content.to_string(),
         comment: None,
+        ..Default::default()
     }
 }
 
@@ -26,6 +27,7 @@ fn create_button_fixture_with_comment(
         label: label.to_string(),
         content: content.to_string(),
         comment: Some(comment.to_string()),
+        ..Default::default()
     }
 }
 
@@ -55,6 +57,7 @@ buttons: vec![
                     create_button_fixture("fmt", "Format", "cargo fmt"),
                     create_button_fixture("build", "Build", "cargo build"),
                 ],
+                groups: vec![],
             },
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
@@ -64,6 +67,7 @@ buttons: vec![
                     create_button_fixture("kubectl-get-pods", "Get Pods", "kubectl get pods"),
                     create_button_fixture("docker-ps", "Docker PS", "docker ps"),
                 ],
+                groups: vec![],
             },
         ],
     }
@@ -300,12 +304,14 @@ buttons: vec![
                     create_button_fixture("fmt", "Format", "cargo fmt"),
                     create_button_fixture("build", "Build", "cargo build"),
                 ],
+                groups: vec![],
             },
             AppProfile {
                 process_name: "WindowsTerminal.exe".to_string(),
                 name: None,
                 inject_mode: None,
 buttons: vec![create_button_fixture("docker-ps", "Docker PS", "docker ps")],
+groups: vec![],
             },
         ],
     }
@@ -449,6 +455,7 @@ fn test_default_buttons_invalid_button_fails_validation() {
         label: String::new(),
         content: "c".into(),
         comment: None,
+        ..Default::default()
     }];
     assert!(config.validate().is_err(), "空标签应校验失败");
 }
@@ -552,6 +559,7 @@ buttons: vec![],
             name: None,
             inject_mode: None,
 buttons: vec![],
+groups: vec![],
         }],
     };
     let err = config.validate().unwrap_err();
@@ -573,12 +581,14 @@ buttons: vec![],
                 name: None,
                 inject_mode: None,
 buttons: vec![],
+groups: vec![],
             },
             AppProfile {
                 process_name: "code.EXE".into(),
                 name: None,
                 inject_mode: None,
 buttons: vec![],
+groups: vec![],
             },
         ],
     };
@@ -600,6 +610,7 @@ buttons: vec![],
             name: None,
             inject_mode: None,
 buttons: vec![create_button_fixture("p1", "P1", "p1c")],
+groups: vec![],
         }],
     };
     assert!(config.validate().is_ok());
@@ -1075,5 +1086,68 @@ fn test_snap_edge_offset_toml_roundtrip() {
     let back: OverlaySettings = toml::from_str(&toml_str).unwrap();
     let (_, offset) = back.snap_edge_offset("a.exe", "horizontal").unwrap();
     assert!((offset - 0.25).abs() < 1e-9);
+}
+
+// ============================================================
+// 分组标签：模型序列化
+// ============================================================
+
+#[test]
+fn test_button_config_group_roundtrip() {
+    let btn = ButtonConfig {
+        id: "b1".into(),
+        label: "B1".into(),
+        content: "x".into(),
+        comment: None,
+        group: Some("git".into()),
+    };
+    let toml_str = toml::to_string(&btn).unwrap();
+    assert!(toml_str.contains("group = \"git\""));
+    let parsed: ButtonConfig = toml::from_str(&toml_str).unwrap();
+    assert_eq!(parsed, btn, "group 字段应序列化/反序列化一致");
+}
+
+#[test]
+fn test_button_config_without_group_still_parses() {
+    // 旧配置（无 group 字段）必须兼容
+    let toml_str = r#"
+id = "b1"
+label = "B1"
+content = "x"
+"#;
+    let parsed: ButtonConfig = toml::from_str(toml_str).unwrap();
+    assert_eq!(parsed.group, None, "缺失 group 应为 None");
+}
+
+#[test]
+fn test_app_profile_groups_parse() {
+    let toml_str = r#"
+process_name = "Test.exe"
+[[groups]]
+name = "Git"
+[[groups.buttons]]
+id = "g1"
+label = "G1"
+content = "git status"
+"#;
+    let profile: AppProfile = toml::from_str(toml_str).unwrap();
+    assert_eq!(profile.groups.len(), 1);
+    assert_eq!(profile.groups[0].name, "Git");
+    assert_eq!(profile.groups[0].buttons.len(), 1);
+    assert_eq!(profile.groups[0].buttons[0].id, "g1");
+}
+
+#[test]
+fn test_app_profile_without_groups_still_parses() {
+    let toml_str = r#"
+process_name = "Test.exe"
+[[buttons]]
+id = "b1"
+label = "B1"
+content = "x"
+"#;
+    let profile: AppProfile = toml::from_str(toml_str).unwrap();
+    assert!(profile.groups.is_empty(), "旧配置无 groups 应为空");
+    assert_eq!(profile.buttons.len(), 1);
 }
 

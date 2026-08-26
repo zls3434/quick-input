@@ -35,7 +35,7 @@ fn validate_inject_mode(field: &str, value: &Option<String>) -> Result<(), Valid
 ///
 /// 每个按钮包含：唯一标识 `id`、显示标签 `label`、待输入内容 `content`、
 /// 以及可选的悬浮注释 `comment`。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ButtonConfig {
     /// 唯一标识符（必填）
     pub id: String,
@@ -46,6 +46,20 @@ pub struct ButtonConfig {
     /// 悬浮注释说明（可选，缺失时默认为 None）
     #[serde(default)]
     pub comment: Option<String>,
+    /// 管理维度分组名（可选）：仅设置界面按此归类展示按钮，不参与悬浮窗 Tab。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// 按钮分组（画像级）：组名 + 组内按钮。
+/// 悬浮窗 Tab 标签的数据来源（仅画像定义的分组生效）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ButtonGroup {
+    /// 分组名（必填，画像内大小写不敏感唯一）
+    pub name: String,
+    /// 该分组下的按钮列表（必填，可空）
+    #[serde(default)]
+    pub buttons: Vec<ButtonConfig>,
 }
 
 /// 按应用（进程）的配置画像
@@ -66,6 +80,9 @@ pub struct AppProfile {
     /// 需用真实扫描码按键模拟。缺失时默认 paste。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inject_mode: Option<String>,
+    /// 自定义分组（可选）：悬浮窗 Tab 标签依据。旧配置无此字段兼容为空。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<ButtonGroup>,
 }
 
 impl AppProfile {
