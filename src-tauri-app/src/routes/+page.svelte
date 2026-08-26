@@ -11,6 +11,18 @@
     label: string;
     content: string;
     comment: string | null;
+    group?: string | null;
+  }
+
+  // 悬浮窗按钮分组视图（后端 get_buttons 返回）
+  interface GroupView {
+    name: string;
+    buttons: ButtonConfig[];
+  }
+
+  interface ButtonsView {
+    groups: GroupView[];
+    default_buttons: ButtonConfig[];
   }
 
   interface OverlaySettings {
@@ -26,7 +38,12 @@
     always_on_top: boolean | null;
   }
 
-  let buttons = $state<ButtonConfig[]>([]);
+  // 悬浮窗按钮分组状态：defaultButtons 为未分组按钮（「默认」标签内容），
+  // groups 为画像自定义分组（Tab 栏数据源），activeGroup 为当前选中分组名
+  // （null 表示「默认」分组）。
+  let defaultButtons = $state<ButtonConfig[]>([]);
+  let groups = $state<GroupView[]>([]);
+  let activeGroup = $state<string | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   // 当前前台进程生效的注入模式：paste（剪贴板粘贴）/ keystroke（按键模拟）
@@ -136,7 +153,12 @@
     loading = true;
     error = null;
     try {
-      buttons = await invoke<ButtonConfig[]>("get_buttons");
+      const view = await invoke<ButtonsView>("get_buttons");
+      groups = view.groups;
+      defaultButtons = view.default_buttons;
+      // 默认选中：存在未分组按钮时选中「默认」，否则选中首个分组
+      activeGroup =
+        view.default_buttons.length > 0 ? null : view.groups[0]?.name ?? null;
       buttonLoadRetries = 0;
       // 注入模式与按钮列表同源（同一配置匹配逻辑），一并刷新
       injectMode = await invoke<"paste" | "keystroke">("get_current_inject_mode");
@@ -156,6 +178,17 @@
       window.dispatchEvent(new CustomEvent("quickinput:adjust-height"));
     }
   }
+
+  // 当前显示按钮：默认分组（activeGroup === null）或选中分组
+  const visibleButtons = $derived(
+    activeGroup === null
+      ? defaultButtons
+      : groups.find((g) => g.name === activeGroup)?.buttons ?? [],
+  );
+  // Tab 栏渲染条件：存在分组且（有分组按钮或有未分组按钮可显示）
+  const showTabs = $derived(groups.length > 0);
+  // 「默认」标签显隐：存在其他分组且有未分组按钮
+  const showDefaultTab = $derived(groups.length > 0 && defaultButtons.length > 0);
 
   // ---- 按钮交互：单击输入，长按超过阈值输入后回车 ----
   // 按下（mousedown）即开始注入文本，同时启动定时器：
@@ -401,7 +434,7 @@
       if (t?.closest?.(".template-dialog")) return;
       const el = t?.closest?.(".button-item");
       if (el) {
-        const btn = buttons.find((b) => b.id === (el as HTMLElement).dataset.id);
+        const btn = visibleButtons.find((b) => b.id === (el as HTMLElement).dataset.id);
         if (btn) {
           showCtxMenu(e, btn);
           return;
@@ -422,7 +455,7 @@
       if (t?.closest?.(".template-dialog")) return;
       const el = t?.closest?.(".button-item");
       if (el) {
-        const btn = buttons.find((b) => b.id === (el as HTMLElement).dataset.id);
+        const btn = visibleButtons.find((b) => b.id === (el as HTMLElement).dataset.id);
         if (btn) showCtxMenu(e, btn);
       }
     };
@@ -442,7 +475,7 @@
 
     // 外置菜单动作转发：菜单项点击 → Rust 隐藏浮层 → 转发回悬浮窗执行
     const unlistenMenuAction = listen<{ id: string }>("floater-menu-action", (e) => {
-      const btn = buttons.find((b) => b.id === e.payload.id);
+      const btn = visibleButtons.find((b) => b.id === e.payload.id);
       if (btn && isTemplateBtn(btn)) showTemplateDialog(btn);
     });
 
@@ -632,7 +665,7 @@
       </svg>
       <p class="error-text">{error}</p>
     </div>
-  {:else if buttons.length === 0}
+  {:else if defaultButtons.length === 0 && groups.length === 0}
     <div class="empty-state">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -655,25 +688,50 @@
       <div class="error-banner">{lastError}</div>
     {/if}
     <div class="button-list">
-      {#each buttons as btn (btn.id)}
-        <Tooltip text={btn.comment}>
-          <button
-            class="button-item"
-            class:is-clicking={injectingId === btn.id}
-            class:is-template={isTemplateBtn(btn)}
-            data-id={btn.id}
-            disabled={injectingId !== null && injectingId !== btn.id}
-            onmousedown={(e) => onBtnDown(e, btn)}
-            onmouseup={onBtnUp}
-            onmouseleave={onBtnLeave}
-          >
-            <span class="button-label">{btn.label}</span>
-            {#if btn.comment}
-              <span class="button-comment">{btn.comment}</span>
-            {/if}
-          </button>
-        </Tooltip>
-      {/each}
+      {#if showTabs}
+        <div class="tab-bar">
+          {#if showDefaultTab}
+            <button
+              class="tab-item"
+              class:active={activeGroup === null}
+              onclick={() => (activeGroup = null)}
+            >默认</button>
+          {/if}
+          {#each groups as g (g.name)}
+            <button
+              class="tab-item"
+              class:active={activeGroup === g.name}
+              onclick={() => (activeGroup = g.name)}
+            >{g.name}</button>
+          {/each}
+        </div>
+      {/if}
+      {#if visibleButtons.length === 0}
+        <div class="empty-state">
+          <p>暂无快捷按钮</p>
+          <p class="hint">编辑 default.toml 添加按钮</p>
+        </div>
+      {:else}
+        {#each visibleButtons as btn (btn.id)}
+          <Tooltip text={btn.comment}>
+            <button
+              class="button-item"
+              class:is-clicking={injectingId === btn.id}
+              class:is-template={isTemplateBtn(btn)}
+              data-id={btn.id}
+              disabled={injectingId !== null && injectingId !== btn.id}
+              onmousedown={(e) => onBtnDown(e, btn)}
+              onmouseup={onBtnUp}
+              onmouseleave={onBtnLeave}
+            >
+              <span class="button-label">{btn.label}</span>
+              {#if btn.comment}
+                <span class="button-comment">{btn.comment}</span>
+              {/if}
+            </button>
+          </Tooltip>
+        {/each}
+      {/if}
     </div>
 
     <!-- 模板输入弹窗由原生 JS 动态创建（见 showTemplateDialog）；右键菜单已外置浮层窗口 -->
@@ -903,6 +961,44 @@
   .button-list::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
     border-radius: 2px;
+  }
+
+  /* 分组 Tab 标签栏（悬浮窗顶部，仅存在画像分组时渲染） */
+  .tab-bar {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 4px;
+    padding: 3px 88px 3px 2px; /* 右端避开右上角控制按钮区 */
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-item {
+    flex: 0 0 auto;
+    padding: 2px 10px;
+    border: none;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #9a9a9a;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    -webkit-app-region: no-drag;
+  }
+  .tab-item:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ddd;
+  }
+  .tab-item.active {
+    background: rgba(122, 162, 247, 0.22);
+    color: #7ab8ff;
+  }
+  .layout-horizontal .tab-bar {
+    flex-basis: 100%; /* 横排换行布局中占满整行 */
+    padding-top: 0;
+    padding-bottom: 2px;
   }
 
   .button-item {
