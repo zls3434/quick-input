@@ -94,6 +94,50 @@ impl AppProfile {
             INJECT_MODE_PASTE
         }
     }
+
+    /// 把按钮列表（含管理维度 group 值）聚合为「分组 + 未分组」存储结构。
+    ///
+    /// 分组按按钮 group 值首次出现顺序聚合；空串/空白的 group 视为未分组。
+    /// 归入分组的按钮其 `group` 字段归一化为 `None`（组名由 `ButtonGroup.name`
+    /// 承载，避免磁盘冗余），保证与 `flattened_buttons` 展平后 round-trip 等价。
+    pub fn regroup(buttons: Vec<ButtonConfig>) -> (Vec<ButtonGroup>, Vec<ButtonConfig>) {
+        let mut groups: Vec<ButtonGroup> = Vec::new();
+        let mut ungrouped: Vec<ButtonConfig> = Vec::new();
+        for mut btn in buttons {
+            // 转 String 持有所有权，避免借用 btn.group 后无法就地修改
+            let g = btn.group.as_deref().map(str::trim).unwrap_or("").to_string();
+            if g.is_empty() {
+                ungrouped.push(btn);
+            } else {
+                // 组名已由 ButtonGroup.name 承载，归一化冗余字段
+                btn.group = None;
+                if let Some(grp) = groups.iter_mut().find(|grp| grp.name == g) {
+                    grp.buttons.push(btn);
+                } else {
+                    groups.push(ButtonGroup {
+                        name: g,
+                        buttons: vec![btn],
+                    });
+                }
+            }
+        }
+        (groups, ungrouped)
+    }
+
+    /// 展平：把 groups 与 buttons 合并为「按钮 + group 值」管理视图（设置界面回显用）。
+    ///
+    /// 分组内按钮携带其组名（`group: Some(name)`），未分组按钮保持 `group: None`。
+    pub fn flattened_buttons(&self) -> Vec<ButtonConfig> {
+        let mut out = Vec::new();
+        for g in &self.groups {
+            for mut b in g.buttons.clone() {
+                b.group = Some(g.name.clone());
+                out.push(b);
+            }
+        }
+        out.extend(self.buttons.clone());
+        out
+    }
 }
 
 /// 快捷键配置
@@ -464,8 +508,48 @@ impl ConfigFile {
                 &profile.inject_mode,
             )?;
 
-            // 校验画像内按钮 ID 唯一
+            // 校验画像内按钮 ID 唯一（groups[].buttons 与 buttons 共用同一集合，跨组唯一）
             let mut p_seen: Vec<&str> = Vec::new();
+
+            // 分组名校验（非空、大小写不敏感唯一）
+            let mut group_names: Vec<&str> = Vec::new();
+            for group in &profile.groups {
+                let gname = group.name.trim();
+                if gname.is_empty() {
+                    return Err(ValidationError {
+                        field: format!("profiles[{}].groups[].name", profile.process_name),
+                        message: "分组名不能为空".into(),
+                    });
+                }
+                if group_names
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(gname))
+                {
+                    return Err(ValidationError {
+                        field: format!("profiles[{}].groups[].name", profile.process_name),
+                        message: format!("分组名 '{}' 重复", group.name),
+                    });
+                }
+                group_names.push(gname);
+                // 组内按钮：id 非空 + 与画像全部按钮（含平铺）跨组唯一
+                for btn in &group.buttons {
+                    if btn.id.trim().is_empty() {
+                        return Err(ValidationError {
+                            field: format!("profiles[{}].groups[].buttons[].id", profile.process_name),
+                            message: "按钮 ID 不能为空".into(),
+                        });
+                    }
+                    if p_seen.iter().any(|s| **s == btn.id) {
+                        return Err(ValidationError {
+                            field: format!("profiles[{}].groups[].buttons[].id", profile.process_name),
+                            message: format!("按钮 ID '{}' 重复", btn.id),
+                        });
+                    }
+                    p_seen.push(&btn.id);
+                }
+            }
+
+            // 校验画像内按钮 ID 唯一（平铺按钮；与分组按钮共用 p_seen 防跨组重复）
             for btn in &profile.buttons {
                 if btn.id.trim().is_empty() {
                     return Err(ValidationError {

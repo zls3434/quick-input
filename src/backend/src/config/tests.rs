@@ -1,4 +1,5 @@
 use super::*;
+use super::defaults::default_config;
 
 // ============================================================
 // 夹具工厂
@@ -1149,5 +1150,119 @@ content = "x"
     let profile: AppProfile = toml::from_str(toml_str).unwrap();
     assert!(profile.groups.is_empty(), "旧配置无 groups 应为空");
     assert_eq!(profile.buttons.len(), 1);
+}
+
+// ============================================================
+// 分组标签：regroup / flatten 归一化
+// ============================================================
+
+#[test]
+fn test_app_profile_regroup_aggregates_by_group() {
+    let buttons = vec![
+        ButtonConfig { id: "b1".into(), label: "B1".into(), content: "x".into(), comment: None, group: Some("git".into()) },
+        ButtonConfig { id: "b2".into(), label: "B2".into(), content: "y".into(), comment: None, group: Some("git".into()) },
+        ButtonConfig { id: "b3".into(), label: "B3".into(), content: "z".into(), comment: None, group: Some("ops".into()) },
+        ButtonConfig { id: "b4".into(), label: "B4".into(), content: "w".into(), comment: None, group: None },
+        ButtonConfig { id: "b5".into(), label: "B5".into(), content: "v".into(), comment: None, group: Some("".into()) },
+    ];
+    let (groups, ungrouped) = AppProfile::regroup(buttons);
+    assert_eq!(groups.len(), 2, "git 与 ops 两组（空串视为未分组）");
+    assert_eq!(groups[0].name, "git");
+    assert_eq!(groups[0].buttons.len(), 2);
+    assert_eq!(groups[1].name, "ops");
+    assert_eq!(groups[1].buttons.len(), 1);
+    assert_eq!(ungrouped.len(), 2, "b4（None）与 b5（空串）归未分组");
+    assert_eq!(ungrouped[0].id, "b4");
+    assert_eq!(ungrouped[1].id, "b5");
+}
+
+#[test]
+fn test_app_profile_regroup_preserves_ungrouped_order() {
+    let buttons = vec![
+        ButtonConfig { id: "u1".into(), label: "U1".into(), content: "x".into(), comment: None, group: None },
+        ButtonConfig { id: "g1".into(), label: "G1".into(), content: "y".into(), comment: None, group: Some("git".into()) },
+        ButtonConfig { id: "u2".into(), label: "U2".into(), content: "z".into(), comment: None, group: None },
+    ];
+    let (groups, ungrouped) = AppProfile::regroup(buttons);
+    assert_eq!(groups[0].buttons[0].id, "g1");
+    assert_eq!(ungrouped.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), vec!["u1", "u2"]);
+}
+
+#[test]
+fn test_app_profile_flatten_roundtrip() {
+    let profile = AppProfile {
+        process_name: "Test.exe".into(),
+        name: None,
+        buttons: vec![ButtonConfig {
+            id: "u1".into(), label: "U1".into(), content: "x".into(), comment: None, group: None,
+        }],
+        inject_mode: None,
+        groups: vec![ButtonGroup {
+            name: "git".into(),
+            buttons: vec![ButtonConfig {
+                id: "g1".into(), label: "G1".into(), content: "git status".into(), comment: None, group: None,
+            }],
+        }],
+    };
+    let flat = profile.flattened_buttons();
+    assert_eq!(flat.len(), 2, "展平后含未分组与分组按钮");
+    assert_eq!(flat[0].group.as_deref(), Some("git"), "分组内按钮展平后携带组名");
+    assert_eq!(flat[1].group, None, "未分组按钮 group 为 None");
+    // round-trip：展平再聚合与原结构等价
+    let (groups, ungrouped) = AppProfile::regroup(flat);
+    assert_eq!(groups, profile.groups);
+    assert_eq!(ungrouped, profile.buttons);
+}
+
+#[test]
+fn test_config_validate_group_name_duplicate_rejected() {
+    let mut config = default_config();
+    config.profiles.push(AppProfile {
+        process_name: "Test.exe".into(),
+        name: None,
+        buttons: vec![],
+        inject_mode: None,
+        groups: vec![
+            ButtonGroup { name: "Git".into(), buttons: vec![] },
+            ButtonGroup { name: "git".into(), buttons: vec![] },
+        ],
+    });
+    let err = config.validate().unwrap_err();
+    assert!(err.field.starts_with("profiles["), "分组名重复应报画像字段错误");
+}
+
+#[test]
+fn test_config_validate_group_name_empty_rejected() {
+    let mut config = default_config();
+    config.profiles.push(AppProfile {
+        process_name: "Test.exe".into(),
+        name: None,
+        buttons: vec![],
+        inject_mode: None,
+        groups: vec![ButtonGroup { name: "  ".into(), buttons: vec![] }],
+    });
+    let err = config.validate().unwrap_err();
+    assert!(err.message.contains("分组名"), "空白分组名应被拒绝");
+}
+
+#[test]
+fn test_config_validate_cross_group_button_id_unique() {
+    let mut config = default_config();
+    config.profiles.push(AppProfile {
+        process_name: "Test.exe".into(),
+        name: None,
+        buttons: vec![ButtonConfig {
+            id: "dup".into(), label: "D".into(), content: "x".into(), comment: None, group: None,
+        }],
+        inject_mode: None,
+        groups: vec![ButtonGroup {
+            name: "git".into(),
+            buttons: vec![ButtonConfig {
+                id: "dup".into(), label: "D2".into(), content: "y".into(), comment: None, group: None,
+            }],
+        }],
+    });
+    let err = config.validate().unwrap_err();
+    assert!(err.message.contains("重复"), "跨组按钮 id 重复应被拒绝");
 }
 
