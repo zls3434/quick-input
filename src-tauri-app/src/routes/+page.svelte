@@ -638,7 +638,7 @@
     const unlistenMoved = win.onMoved(() => scheduleSaveGeometry());
     const unlistenResized = win.onResized(() => scheduleSaveGeometry());
 
-    // ---- 横向布局高度自适应：按按钮行数调整客户区高度 ----
+    // ---- 悬浮窗高度自适应（竖排/横排统一）：按按钮内容调整客户区高度 ----
     // 策略：前端只测量目标高度，单次调用后端原子调整（位置 + 尺寸一次
     // SetWindowPos 生效，无"先改尺寸再改位置"的中间可见态）。
     // 锚定方向由后端解析：吸附时保持贴合边不动（窗口下方/屏顶向下扩展、
@@ -646,17 +646,20 @@
     // 之后保底边（符合拖动交互习惯）。
     let firstAdjustDone = false;
     let adjustTimer: ReturnType<typeof setTimeout> | null = null;
-    const adjustHorizontalHeight = async () => {
-      if (layout !== "horizontal") return;
+    const adjustOverlayHeight = async () => {
       const list = document.querySelector<HTMLElement>(".button-list");
       if (!list) return;
       try {
         const [inner, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
-        // 目标客户区高度（物理像素）：列表实际高度（含 padding，控制条浮动不占空间）+ 余量
+        // 目标客户区高度（物理像素）：列表实际高度（含四面 6px padding，控制条浮动
+        // 不占空间）。不额外加余量，窗口精确贴合内容实现四面等宽。
         const listH = list.scrollHeight;
         const banner = document.querySelector<HTMLElement>(".error-banner");
         const bannerH = banner ? banner.offsetHeight + 8 : 0;
-        const targetInnerH = Math.round((listH + bannerH + 8) * scale);
+        let targetInnerH = Math.round((listH + bannerH) * scale);
+        // 上限：不超出显示器工作区（竖排按钮很多时防止窗口超出屏幕）
+        const maxH = Math.max(window.screen.availHeight * scale - 16, 40);
+        targetInnerH = Math.min(targetInnerH, maxH);
         if (Math.abs(inner.height - targetInnerH) > 2) {
           await invoke("apply_overlay_height", {
             targetInnerH,
@@ -670,7 +673,7 @@
     };
     const scheduleAdjust = () => {
       if (adjustTimer) clearTimeout(adjustTimer);
-      adjustTimer = setTimeout(adjustHorizontalHeight, 80);
+      adjustTimer = setTimeout(adjustOverlayHeight, 80);
     };
     // 按钮增删/布局切换/窗口缩放统一走事件兜底：
     // - loadButtons 完成后派发（onMount 时的 ResizeObserver 因列表节点
@@ -826,12 +829,15 @@
   /* 右上角控制按钮条已外置为顶栏浮层（见 floater/+page.svelte），此处不再定义 */
 
   .button-list {
-    flex: 1;
+    /* 不拉伸：高度由按钮内容决定（配合高度自适应，窗口贴合内容实现四面 padding 等宽） */
+    flex: 0 0 auto;
     overflow-y: auto;
-    padding: 4px 6px;
+    /* 四面等宽：统一 6px，避免上下/左右边距不一致 */
+    padding: 6px;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    /* 竖排按钮靠上对齐、单列（默认 flex-start） */
   }
 
   /* 横向布局：按钮水平排列、自动换行、更紧凑 */
@@ -840,8 +846,10 @@
     flex-wrap: wrap;
     align-items: stretch;
     align-content: flex-start;
+    /* 横排按钮靠左对齐（工具栏习惯，窗口宽度由用户控制） */
+    justify-content: flex-start;
     gap: 4px;
-    padding: 4px 8px;
+    padding: 6px;
     /* 不纵向拉伸：scrollHeight 反映真实内容行数，
        避免高度自适应目标随窗口高度虚高导致死循环 */
     flex: 0 0 auto;
