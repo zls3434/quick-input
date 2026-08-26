@@ -14,6 +14,7 @@ mod target_window;
 mod tray;
 mod window;
 mod floater;
+mod placeholder;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -83,16 +84,25 @@ fn focus_debug(state: tauri::State<AppState>) -> Result<String, String> {
 ///
 /// mode：注入模式。"paste"（默认，剪贴板粘贴）或 "keystroke"（扫描码
 /// 按键模拟，面向老游戏——DirectInput/自绘输入框不响应粘贴与 Unicode 注入）
+///
+/// 注入前展开动态占位符（{date} / {time} / {clipboard}），支持时间戳与
+/// 剪贴板内容动态输入。{input} 不在此展开（前端模板交互专用）。
 #[tauri::command]
 async fn inject_text(
     text: String,
     cursor_back: Option<u32>,
     mode: Option<String>,
 ) -> Result<(), String> {
+    // 展开动态占位符（剪贴板读取在注入线程内进行，避免阻塞主线程）
+    let expanded = {
+        let now = chrono::Local::now();
+        let clipboard = crate::placeholder::read_clipboard_text();
+        crate::placeholder::expand_placeholders(&text, now, &clipboard)
+    };
     let injector = PlatformInjector::new();
     let mode = mode.unwrap_or_else(|| "paste".to_string());
     tauri::async_runtime::spawn_blocking(move || {
-        injector.inject_text_mode(&text, cursor_back.unwrap_or(0), &mode)
+        injector.inject_text_mode(&expanded, cursor_back.unwrap_or(0), &mode)
     })
     .await
     .map_err(|e| e.to_string())?

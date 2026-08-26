@@ -1,6 +1,6 @@
 [package]
 name = "quickinput"
-version = "0.11.4"
+version = "0.11.5"
 description = "QuickInput - 桌面快捷输入工具"
 authors = ["zls3434"]
 edition = "2021"

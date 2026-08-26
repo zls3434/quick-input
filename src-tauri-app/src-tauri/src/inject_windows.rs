@@ -108,7 +108,7 @@ fn set_clipboard_text(text: &str) -> Result<(), InjectError> {
 }
 
 /// 读取剪贴板文本（无文本时返回 None）
-fn get_clipboard_text() -> Option<String> {
+pub(crate) fn get_clipboard_text() -> Option<String> {
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,

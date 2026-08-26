@@ -360,5 +360,17 @@ mod tests {
                 .any(|b| b.content.contains("{input}")),
             "config.example.toml 应包含 {{input}} 模板按钮示例"
         );
+        // 示例应演示动态占位符（{date}/{time}/{clipboard}，后端注入时展开）
+        let dynamic = ["{date}", "{time}", "{clipboard}"];
+        for ph in dynamic {
+            assert!(
+                parsed
+                    .buttons
+                    .iter()
+                    .chain(parsed.profiles.iter().flat_map(|p| p.buttons.iter()))
+                    .any(|b| b.content.contains(ph)),
+                "config.example.toml 应包含 {ph} 动态占位符按钮示例"
+            );
+        }
     }
 }
