@@ -29,12 +29,16 @@
     text?: string | null;
     items?: MenuItem[] | null;
     toolbar?: ToolbarPayload | null;
+    // 浮层透明度（百分比 20~100，与悬浮窗本体同源配置），由 Rust 统一下发
+    opacity_pct?: number | null;
   }
 
   let kind = $state<FloaterKind>("tooltip");
   let text = $state("");
   let items = $state<MenuItem[]>([]);
   let toolbar = $state<ToolbarPayload | null>(null);
+  // 浮层透明度百分比（与悬浮窗本体 overlayOpacityPct 同步，默认 85）
+  let opacityPct = $state(85);
   // 浮层相对锚点方向（tooltip 箭头用）：above=true → 箭头朝下指向按钮
   let above = $state(true);
   // 淡出动画进行中（自动隐藏前播放，结束后自行隐藏）
@@ -50,12 +54,19 @@
     });
   }
 
+  // 透明度收敛到 20~100 百分比区间（与悬浮窗本体 clamp 规则一致）
+  function clampOpacity(v: number | null | undefined): number {
+    if (v === null || v === undefined) return 85;
+    return Math.min(100, Math.max(20, v));
+  }
+
   onMount(() => {
     const unshow = listen<ShowPayload>("floater://show", (e) => {
       kind = e.payload.kind;
       text = e.payload.text ?? "";
       items = e.payload.items ?? [];
       toolbar = e.payload.toolbar ?? null;
+      opacityPct = clampOpacity(e.payload.opacity_pct);
       fading = false;
       reportSize();
     });
@@ -66,6 +77,7 @@
       text = "";
       items = [];
       toolbar = null;
+      opacityPct = 85;
       fading = false;
     });
     // 自动隐藏前淡出：播放 150ms 过渡后自行隐藏（窗口不立即移走，
@@ -87,6 +99,7 @@
         text = pending.text ?? "";
         items = pending.items ?? [];
         toolbar = pending.toolbar ?? null;
+        opacityPct = clampOpacity(pending.opacity_pct);
         reportSize();
       })
       .catch(() => {});
@@ -128,9 +141,15 @@
 </script>
 
 {#if kind === "tooltip" && text}
-  <div class="tooltip" class:above class:below={!above} role="tooltip">{text}</div>
+  <div
+    class="tooltip"
+    class:above
+    class:below={!above}
+    style="--fl-opacity: {opacityPct / 100}"
+    role="tooltip"
+  >{text}</div>
 {:else if kind === "menu" && items.length > 0}
-  <div class="ctx-menu">
+  <div class="ctx-menu" style="--fl-opacity: {opacityPct / 100}">
     {#each items as item}
       <button
         class="ctx-item"
@@ -149,6 +168,7 @@
   <div
     class="toolbar"
     class:fading
+    style="--fl-opacity: {opacityPct / 100}"
     role="toolbar"
     tabindex="-1"
     aria-label="悬浮窗顶栏"
@@ -276,6 +296,8 @@
     white-space: normal;
     text-align: left;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    /* 透明度与悬浮窗本体同步（--fl-opacity 由透明度配置注入，20~100%） */
+    opacity: var(--fl-opacity, 1);
   }
   /* 浮层在锚点上方：箭头朝下指向按钮 */
   .tooltip.above::after {
@@ -306,6 +328,8 @@
     border-radius: 8px;
     padding: 4px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    /* 透明度与悬浮窗本体同步（--fl-opacity 由透明度配置注入） */
+    opacity: var(--fl-opacity, 1);
   }
   .ctx-item {
     display: block;
@@ -341,8 +365,9 @@
     padding: 4px 6px;
     background: rgba(28, 28, 30, 0.92);
     border-radius: 10px;
-    /* 淡入：每次显示播放；淡出由 .fading 状态驱动 transition */
-    opacity: 1;
+    /* 透明度与悬浮窗本体同步（--fl-opacity 由透明度配置注入）；
+       淡入动画终点用同一变量，淡出（.fading）覆盖为 0 不受影响 */
+    opacity: var(--fl-opacity, 1);
     animation: tb-fade-in 0.18s ease;
     transition: opacity 0.15s ease;
   }
@@ -354,7 +379,7 @@
       opacity: 0;
     }
     to {
-      opacity: 1;
+      opacity: var(--fl-opacity, 1);
     }
   }
 

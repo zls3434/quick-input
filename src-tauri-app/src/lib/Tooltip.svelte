@@ -4,7 +4,15 @@
   // 内容渲染在外置浮层窗口（floater）中，避免超出悬浮窗被裁剪。
   import { hideTooltip, showTooltip } from "$lib/floater";
 
-  let { text, children }: { text: string | null; children: import("svelte").Snippet } = $props();
+  let {
+    text,
+    opacityPct,
+    children,
+  }: {
+    text: string | null;
+    opacityPct: number;
+    children: import("svelte").Snippet;
+  } = $props();
   let wrap: HTMLSpanElement | undefined = $state();
   // 显示防抖：鼠标快速掠过按钮（停留不足阈值）不触发 tooltip，避免闪烁。
   // 隐藏防抖：hover 快速切换按钮时（旧按钮 leave → 新按钮 enter），
@@ -27,7 +35,7 @@
       el.parentElement ??
       el;
     const r = btnEl.getBoundingClientRect();
-    token = showTooltip(text, { x: r.left, y: r.top, w: r.width, h: r.height });
+    token = showTooltip(text, { x: r.left, y: r.top, w: r.width, h: r.height }, opacityPct);
   }
 
   function scheduleShow() {

@@ -39,10 +39,10 @@ let currentKind: Kind | null = null;
 // 防止快速滑过多个按钮时，旧按钮的延迟隐藏误杀新按钮刚显示的 tooltip。
 let currentToken = 0;
 
-export function showTooltip(text: string, anchor: AnchorRect): number {
+export function showTooltip(text: string, anchor: AnchorRect, opacityPct: number): number {
   const token = ++currentToken;
   currentKind = "tooltip";
-  void invoke("show_floater", { kind: "tooltip", text, anchor }).catch((e) =>
+  void invoke("show_floater", { kind: "tooltip", text, anchor, opacityPct }).catch((e) =>
     console.error("显示 tooltip 失败", e),
   );
   return token;
@@ -58,9 +58,9 @@ export function hideTooltip(token?: number): void {
   void invoke("hide_floater").catch(() => {});
 }
 
-export function showMenu(items: MenuItem[], anchor: AnchorRect): void {
+export function showMenu(items: MenuItem[], anchor: AnchorRect, opacityPct: number): void {
   currentKind = "menu";
-  void invoke("show_floater", { kind: "menu", items, anchor }).catch((e) =>
+  void invoke("show_floater", { kind: "menu", items, anchor, opacityPct }).catch((e) =>
     console.error("显示右键菜单失败", e),
   );
 }
@@ -68,11 +68,12 @@ export function showMenu(items: MenuItem[], anchor: AnchorRect): void {
 export function showToolbar(payload: ToolbarPayload): void {
   currentKind = "toolbar";
   // 顶栏锚点由后端直接取悬浮窗窗口矩形（show_floater Toolbar 分支），
-  // 忽略前端锚点，传虚拟值即可。
+  // 忽略前端锚点，传虚拟值即可。透明度与主窗口同源（payload.opacityPct）。
   void invoke("show_floater", {
     kind: "toolbar",
     toolbar: payload,
     anchor: { x: 0, y: 0, w: 0, h: 0 },
+    opacityPct: payload.opacityPct,
   }).catch((e) => console.error("显示顶栏浮层失败", e));
 }
 
@@ -91,4 +92,12 @@ export function isMenuVisible(): boolean {
 export function hideFloater(): void {
   currentKind = null;
   void invoke("hide_floater").catch(() => {});
+}
+
+// 纯状态重置：Rust 侧隐藏浮层后（emit floater-hidden）由悬浮窗前端调用，
+// 仅复位 currentKind，不再触发 hide_floater，避免事件循环。
+// 用于修复：右键菜单以任意方式关闭后 currentKind 残留为 menu，
+// 导致顶栏浮层被 isMenuVisible() 永久拦截的问题。
+export function resetFloaterKind(): void {
+  currentKind = null;
 }

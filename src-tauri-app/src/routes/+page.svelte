@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import Tooltip from "$lib/Tooltip.svelte";
-  import { hideFloater, showMenu } from "$lib/floater";
+  import { hideFloater, resetFloaterKind, showMenu } from "$lib/floater";
   import {
     fadeOutToolbar,
     isMenuVisible,
@@ -235,17 +235,19 @@
       const s = await invoke<{ hold_threshold_ms: number | null }>("get_overlay_settings");
       holdThresholdMs = Math.min(5000, Math.max(200, s.hold_threshold_ms ?? 1000));
     } catch (e) {
-      error = `加载按钮失败: ${e}`;
-      console.error(e);
+      console.error(`加载按钮失败: ${e}`);
       if (buttonLoadRetries < 20) {
         buttonLoadRetries += 1;
+        // 保持 loading 状态重试：避免重试间隙闪现错误/空状态界面
         setTimeout(() => void loadButtons(), 300);
+        return;
       }
-    } finally {
-      loading = false;
-      // 按钮列表变化可能改变横向布局行数，通知高度自适应（监听在 onMount 注册）
-      window.dispatchEvent(new CustomEvent("quickinput:adjust-height"));
+      // 重试耗尽才显示错误
+      error = `加载按钮失败: ${e}`;
     }
+    loading = false;
+    // 按钮列表变化可能改变横向布局行数，通知高度自适应（监听在 onMount 注册）
+    window.dispatchEvent(new CustomEvent("quickinput:adjust-height"));
   }
 
   // 当前显示按钮：默认分组（activeGroup === null）或选中分组
@@ -470,7 +472,11 @@
     ];
     const el = (e.target as HTMLElement | null)?.closest?.(".button-item") as HTMLElement | null;
     const rect = (el ?? (e.target as HTMLElement)).getBoundingClientRect();
-    showMenu(items, { x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+    showMenu(
+      items,
+      { x: rect.left, y: rect.top, w: rect.width, h: rect.height },
+      overlayOpacityPct,
+    );
   }
 
   onMount(() => {
@@ -535,6 +541,13 @@
       hideFloater();
     };
     window.addEventListener("click", closeMenuOnClick);
+
+    // Rust 侧隐藏浮层后通知（任意关闭路径：菜单项点击/禁用项/淡出等）：
+    // 复位浮层类型状态，避免菜单关闭后 currentKind 残留导致顶栏浮层
+    // 被 isMenuVisible() 永久拦截（纯状态重置，不再触发 hide，防循环）。
+    const unlistenFloaterHidden = listen("floater-hidden", () => {
+      resetFloaterKind();
+    });
 
     // 监听配置切换事件，收到后自动刷新按钮列表与布局
     const unlisten = listen("ConfigSwitched", () => {
@@ -765,6 +778,7 @@
       unlistenMoved.then((fn) => fn());
       unlistenResized.then((fn) => fn());
       unlistenResizedAdjust.then((fn) => fn());
+      unlistenFloaterHidden.then((fn) => fn());
       window.removeEventListener("quickinput:adjust-height", onAdjustEvt);
     };
   });
@@ -827,7 +841,7 @@
         </div>
       {:else}
         {#each visibleButtons as btn (btn.id)}
-          <Tooltip text={btn.comment}>
+          <Tooltip text={btn.comment} opacityPct={overlayOpacityPct}>
             <button
               class="button-item"
               class:is-clicking={injectingId === btn.id}

@@ -259,6 +259,7 @@ pub fn show_floater(
     items: Option<Vec<FloaterMenuItem>>,
     anchor: FloaterAnchor,
     toolbar: Option<serde_json::Value>,
+    opacity_pct: Option<u8>,
 ) -> Result<(), String> {
     let fkind = match kind.as_str() {
         "tooltip" => FloaterKind::Tooltip,
@@ -301,7 +302,13 @@ pub fn show_floater(
         *slot = Some(fkind);
     }
 
-    let payload = serde_json::json!({ "kind": kind, "text": text, "items": items, "toolbar": toolbar });
+    let payload = serde_json::json!({
+        "kind": kind,
+        "text": text,
+        "items": items,
+        "toolbar": toolbar,
+        "opacity_pct": opacity_pct,
+    });
     // 双通道投递：事件优先送达（页面已就绪时），PENDING_SHOW 缓存供
     // 页面 onMount 主动 pull 兜底（页面 JS 因后台节流挂起时事件会丢失）。
     {
@@ -401,6 +408,9 @@ pub fn hide_floater(app: AppHandle) -> Result<(), String> {
         let _ = floater.set_position(tauri::PhysicalPosition::new(0, 0));
         let _ = floater.emit("floater://hide", ());
     }
+    // 通知悬浮窗前端复位浮层类型状态（currentKind）：菜单等以任意方式
+    // 关闭后，overlay 的 isMenuVisible() 不再拦截顶栏浮层显示。
+    let _ = app.emit_to("overlay", "floater-hidden", ());
     if let Ok(mut slot) = CURRENT_KIND.lock() {
         *slot = None;
     }
