@@ -110,13 +110,20 @@
   }
 
   // 切换横竖布局（后端应用几何并广播 ConfigSwitched，loadLayout 收到后刷新）
+  // 布局切换会直接改变窗口几何（触发 onResized），置位标志避免该尺寸变化
+  // 被误记为竖排用户自定义高度
+  let layoutSwitching = false;
   async function toggleLayout() {
     const next = layout === "vertical" ? "horizontal" : "vertical";
+    layoutSwitching = true;
     try {
       await invoke("set_overlay_layout", { layout: next });
     } catch (e) {
       console.error("切换布局失败", e);
     }
+    setTimeout(() => {
+      layoutSwitching = false;
+    }, 800);
   }
 
   // 隐藏悬浮窗（托盘菜单 / 全局热键可再次显示）
@@ -644,8 +651,23 @@
     // 锚定方向由后端解析：吸附时保持贴合边不动（窗口下方/屏顶向下扩展、
     // 窗口上方/屏底向上扩展、左右侧对称扩展）；无吸附时首次保顶边、
     // 之后保底边（符合拖动交互习惯）。
-    // 竖排高度由用户控制：首次加载贴合内容（四面 padding 等宽默认），
-    // 之后内容变化只扩不缩——用户手动调高的高度不被强制缩小。
+    // 竖排高度由用户控制并跨重启记忆（localStorage）：用户拖动调整高度后
+    // 持久保存，内容变化时"用户高度优先、只扩不缩"（按钮增多自动扩展）。
+    // 竖排用户自定义高度记忆键（WebView2 localStorage，跨会话持久）
+    const VERTICAL_USER_H_KEY = "quickinput.overlay.vertical-user-h";
+    // 程序贴合（apply_overlay_height）触发的尺寸变化标志：期间 onResized
+    // 不写入用户记忆，避免把程序调整误记为用户自定义高度
+    let programmaticResize = false;
+    function readUserVerticalH(): number | null {
+      try {
+        const v = localStorage.getItem(VERTICAL_USER_H_KEY);
+        if (v === null) return null;
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      } catch {
+        return null;
+      }
+    }
     let firstAdjustDone = false;
     let adjustTimer: ReturnType<typeof setTimeout> | null = null;
     const adjustOverlayHeight = async () => {
@@ -659,18 +681,28 @@
         const banner = document.querySelector<HTMLElement>(".error-banner");
         const bannerH = banner ? banner.offsetHeight + 8 : 0;
         let targetInnerH = Math.round((listH + bannerH) * scale);
+        // 竖排：用户自定义高度优先（不低于内容，内容变多时自动扩展）
+        if (layout === "vertical") {
+          const userH = readUserVerticalH();
+          if (userH !== null) {
+            targetInnerH = Math.max(targetInnerH, userH);
+          } else if (firstAdjustDone && targetInnerH < inner.height) {
+            // 无记忆但当前窗口高于内容（防御）：保持用户高度不缩小
+            return;
+          }
+        }
         // 上限：不超出显示器工作区（竖排按钮很多时防止窗口超出屏幕）
         const maxH = Math.max(window.screen.availHeight * scale - 16, 40);
         targetInnerH = Math.min(targetInnerH, maxH);
-        // 竖排：非首次调整且内容低于当前高度 → 保持用户高度（不缩小）
-        if (layout === "vertical" && firstAdjustDone && targetInnerH < inner.height) {
-          return;
-        }
         if (Math.abs(inner.height - targetInnerH) > 2) {
+          programmaticResize = true;
           await invoke("apply_overlay_height", {
             targetInnerH,
             fallbackKeepTop: !firstAdjustDone,
           });
+          setTimeout(() => {
+            programmaticResize = false;
+          }, 600);
         }
         firstAdjustDone = true;
       } catch (e) {
@@ -687,10 +719,28 @@
     // - 布局切换时 loadLayout 派发
     const onAdjustEvt = () => scheduleAdjust();
     window.addEventListener("quickinput:adjust-height", onAdjustEvt);
-    // 窗口尺寸变化：横排保持自适应贴合内容（按钮换行随宽度变化）；
-    // 竖排高度由用户控制（拖动调整后保持，不强制贴合），故竖排 resize 不触发自适应
+    // 窗口尺寸变化：
+    // - 横排保持自适应贴合内容（按钮换行随宽度变化）
+    // - 竖排由用户控制：拖动调整高度后记忆（跨重启）。仅当确为用户调整
+    //   （首次加载完成、非程序贴合、非布局切换、窗口高度不低于内容）时记录，
+    //   避免启动几何应用/程序贴合/布局切换的尺寸变化被误记为用户高度
     const unlistenResizedAdjust = win.onResized(() => {
-      if (layout === "horizontal") scheduleAdjust();
+      if (layout === "horizontal") {
+        scheduleAdjust();
+        return;
+      }
+      if (!firstAdjustDone || programmaticResize || layoutSwitching) return;
+      const list = document.querySelector<HTMLElement>(".button-list");
+      if (!list) return;
+      // 窗口高度不低于内容高度（内容须完整可见）才算用户自定义高度
+      const contentH = list.scrollHeight + 12;
+      if (innerHeight >= contentH) {
+        try {
+          localStorage.setItem(VERTICAL_USER_H_KEY, String(innerHeight));
+        } catch {
+          /* localStorage 不可用时忽略（本次会话仍可拖动保持） */
+        }
+      }
     });
     // 首次加载兜底（等待 loading 结束与 DOM 渲染）
     setTimeout(() => scheduleAdjust(), 300);
