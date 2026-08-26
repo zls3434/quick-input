@@ -115,6 +115,7 @@
     label: string;
     content: string;
     comment: string | null;
+    group?: string | null;
   }
 
   interface AppProfile {
@@ -360,6 +361,7 @@
   let editLabel = $state("");
   let editContent = $state("");
   let editComment = $state("");
+  let editGroup = $state("");
   let saveError = $state<string | null>(null);
 
   async function loadButtons() {
@@ -580,6 +582,7 @@
     editLabel = "";
     editContent = "";
     editComment = "";
+    editGroup = "";
     saveError = null;
     editing = true;
   }
@@ -590,6 +593,7 @@
     editLabel = btn.label;
     editContent = btn.content;
     editComment = btn.comment ?? "";
+    editGroup = btn.group ?? "";
     saveError = null;
     editing = true;
   }
@@ -611,6 +615,7 @@
         label: editLabel.trim(),
         content: editContent.trim(),
         comment: editComment.trim() || null,
+        group: editGroup.trim() || null,
       });
       editing = false;
       await loadButtons();
@@ -631,6 +636,7 @@
         label: editLabel.trim(),
         content: editContent.trim(),
         comment: editComment.trim() || null,
+        group: editGroup.trim() || null,
       });
       editing = false;
       await loadButtons();
@@ -1033,6 +1039,9 @@
             <label>
               注释 <input bind:value={editComment} placeholder="悬浮注释说明（可选）" />
             </label>
+            <label>
+              分组 <input bind:value={editGroup} placeholder="管理用分组（可选），如 git / 运维" />
+            </label>
             <div class="form-actions">
               <button class="btn-cancel" onclick={cancelEdit}>取消</button>
               <button class="btn-primary" onclick={editMode === "new" ? saveNew : saveEdit}>保存</button>
@@ -1110,6 +1119,12 @@
                       <div class="picker-info">
                         <span class="p-label">{b.label}</span>
                         <span class="p-content">{b.content}</span>
+                        <input
+                          class="row-group"
+                          bind:value={b.group}
+                          placeholder="分组"
+                          title="该按钮在此映射中的分组（悬浮窗 Tab 依据）"
+                        />
                       </div>
                       <button class="btn-delete" onclick={() => removeFromSelected(i)}>移除</button>
                     </div>
@@ -1196,6 +1211,12 @@
                       <div class="picker-info">
                         <span class="p-label">{b.label}</span>
                         <span class="p-content">{b.content}</span>
+                        <input
+                          class="row-group"
+                          bind:value={b.group}
+                          placeholder="分组"
+                          title="该按钮在此映射中的分组（悬浮窗 Tab 依据）"
+                        />
                       </div>
                       <button class="btn-delete" onclick={() => removeFromDef(i)}>移除</button>
                     </div>
@@ -1776,6 +1797,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .picker-info .row-group {
+    width: 80px;
+    padding: 2px 6px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.25);
+    color: #bbb;
+    font-size: 11px;
+    outline: none;
+  }
+  .picker-info .row-group:focus {
+    border-color: #7aa2f7;
   }
   .picker-empty {
     font-size: 11px;
