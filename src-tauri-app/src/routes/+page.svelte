@@ -543,10 +543,27 @@
     window.addEventListener("click", closeMenuOnClick);
 
     // Rust 侧隐藏浮层后通知（任意关闭路径：菜单项点击/禁用项/淡出等）：
-    // 复位浮层类型状态，避免菜单关闭后 currentKind 残留导致顶栏浮层
-    // 被 isMenuVisible() 永久拦截（纯状态重置，不再触发 hide，防循环）。
+    // 复位浮层类型状态与顶栏显示状态，避免菜单关闭后 currentKind 残留
+    // 导致顶栏被 isMenuVisible() 永久拦截、或 toolbarShown 残留导致
+    // 触发区 5 秒内不响应（纯状态重置，不再触发 hide，防循环）。
     const unlistenFloaterHidden = listen("floater-hidden", () => {
       resetFloaterKind();
+      toolbarShown = false;
+      cancelToolbarHide();
+    });
+
+    // Rust 侧浮层内容切换通知（show_floater 广播）：顶栏显示时登记
+    // 显示状态；tooltip/菜单占用时复位顶栏状态。使 toolbarShown 始终
+    // 与真实浮层内容一致——顶栏被 tooltip/菜单顶掉后触发区可立即重显。
+    const unlistenFloaterShowing = listen<{ kind: string }>("floater-showing", (e) => {
+      if (e.payload.kind === "toolbar") {
+        toolbarShown = true;
+        lastToolbarShowAt = Date.now();
+        cancelToolbarHide();
+      } else {
+        toolbarShown = false;
+        cancelToolbarHide();
+      }
     });
 
     // 监听配置切换事件，收到后自动刷新按钮列表与布局
@@ -779,6 +796,7 @@
       unlistenResized.then((fn) => fn());
       unlistenResizedAdjust.then((fn) => fn());
       unlistenFloaterHidden.then((fn) => fn());
+      unlistenFloaterShowing.then((fn) => fn());
       window.removeEventListener("quickinput:adjust-height", onAdjustEvt);
     };
   });

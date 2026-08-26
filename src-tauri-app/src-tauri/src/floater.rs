@@ -5,7 +5,7 @@
 //! 彻底摆脱悬浮窗尺寸约束（WebView2 内容在窗口物理边界处裁剪）。
 
 use crate::window::get_overlay_window;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
@@ -119,10 +119,16 @@ pub struct FloaterAnchor {
 
 /// 待定位数据（floater_ready 时消费）
 struct PendingPlacement {
+    /// 显示序列号：与前端渲染内容一一对应，快速切换时防止
+    /// 旧内容的尺寸上报配新内容的定位（invoke 与事件通道时序差）。
+    seq: u64,
     anchor: (i32, i32, i32, i32),
     work_area: (i32, i32, i32, i32),
     kind: FloaterKind,
 }
+
+/// 浮层显示序列号（每次 show_floater 递增，随事件下发前端）
+static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
 
 static PENDING: Mutex<Option<PendingPlacement>> = Mutex::new(None);
 static CURRENT_KIND: Mutex<Option<FloaterKind>> = Mutex::new(None);
@@ -293,9 +299,12 @@ pub fn show_floater(
 
     let work_area = overlay_monitor_work_area(&overlay).unwrap_or((0, 0, 1920, 1040));
 
+    // 本次显示序列号：随事件下发前端，floater_ready 回传校验匹配
+    let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+
     {
         let mut slot = PENDING.lock().map_err(|e| e.to_string())?;
-        *slot = Some(PendingPlacement { anchor: anchor_px, work_area, kind: fkind });
+        *slot = Some(PendingPlacement { seq, anchor: anchor_px, work_area, kind: fkind });
     }
     {
         let mut slot = CURRENT_KIND.lock().map_err(|e| e.to_string())?;
@@ -308,6 +317,7 @@ pub fn show_floater(
         "items": items,
         "toolbar": toolbar,
         "opacity_pct": opacity_pct,
+        "seq": seq,
     });
     // 双通道投递：事件优先送达（页面已就绪时），PENDING_SHOW 缓存供
     // 页面 onMount 主动 pull 兜底（页面 JS 因后台节流挂起时事件会丢失）。
@@ -316,6 +326,10 @@ pub fn show_floater(
         *slot = Some(payload.clone());
     }
     app.emit_to("floater", "floater://show", payload)
+        .map_err(|e| e.to_string())?;
+    // 通知悬浮窗前端当前浮层承载类型：顶栏显示时登记显示状态；
+    // tooltip/菜单占用时复位顶栏状态，避免顶栏被顶掉后触发区不响应。
+    app.emit_to("overlay", "floater-showing", serde_json::json!({ "kind": kind }))
         .map_err(|e| e.to_string())
 }
 
@@ -349,13 +363,24 @@ pub fn floater_debug() -> String {
 }
 
 /// 浮层内容渲染完成：按上报尺寸定位并显示
+///
+/// `seq` 为本次渲染对应的显示序列号：仅当与 PENDING 中最新序列一致才
+/// 消费定位数据。快速连续切换浮层时，旧内容的 reportSize 可能晚于新
+/// show 到达（invoke 与事件通道时序差异），不匹配则忽略并等待匹配的
+/// 上报，避免"新内容 + 旧锚点/尺寸"的错位与抖动。
 #[tauri::command]
-pub fn floater_ready(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
-    let pending = PENDING
-        .lock()
-        .map_err(|e| e.to_string())?
-        .take()
-        .ok_or_else(|| "无待定位的浮层数据".to_string())?;
+pub fn floater_ready(app: AppHandle, seq: u64, width: f64, height: f64) -> Result<(), String> {
+    let pending = {
+        let mut slot = PENDING.lock().map_err(|e| e.to_string())?;
+        match slot.as_ref() {
+            Some(p) if p.seq == seq => slot.take(),
+            _ => None,
+        }
+    };
+    let Some(pending) = pending else {
+        // 无匹配序列（已被更新的 show 覆盖）：本次上报已过期，忽略
+        return Ok(());
+    };
     let floater = get_floater_window(&app).ok_or_else(|| "浮层窗口 (floater) 未找到".to_string())?;
 
     let scale = floater.scale_factor().map_err(|e| e.to_string())?;

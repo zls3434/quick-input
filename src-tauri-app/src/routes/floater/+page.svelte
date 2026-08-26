@@ -31,6 +31,8 @@
     toolbar?: ToolbarPayload | null;
     // 浮层透明度（百分比 20~100，与悬浮窗本体同源配置），由 Rust 统一下发
     opacity_pct?: number | null;
+    // 显示序列号：reportSize 回传，Rust 据此校验定位数据与本次渲染匹配
+    seq?: number | null;
   }
 
   let kind = $state<FloaterKind>("tooltip");
@@ -39,16 +41,20 @@
   let toolbar = $state<ToolbarPayload | null>(null);
   // 浮层透明度百分比（与悬浮窗本体 overlayOpacityPct 同步，默认 85）
   let opacityPct = $state(85);
+  // 当前渲染对应的显示序列号（Rust 分配，随 show 事件下发）
+  let seq = $state(0);
   // 浮层相对锚点方向（tooltip 箭头用）：above=true → 箭头朝下指向按钮
   let above = $state(true);
   // 淡出动画进行中（自动隐藏前播放，结束后自行隐藏）
   let fading = $state(false);
 
-  // 渲染后测量内容尺寸并上报（两阶段定位：先测量后显示，避免闪烁）
+  // 渲染后测量内容尺寸并上报（两阶段定位：先测量后显示，避免闪烁）。
+  // 携带当前显示序列号：Rust 侧校验定位数据与本次渲染匹配，快速连续
+  // 切换浮层时旧上报会被忽略，防止内容与位置错位。
   function reportSize() {
     requestAnimationFrame(() => {
       const el = document.body;
-      void invoke("floater_ready", { width: el.scrollWidth, height: el.scrollHeight }).catch(
+      void invoke("floater_ready", { seq, width: el.scrollWidth, height: el.scrollHeight }).catch(
         (e) => console.error("上报浮层尺寸失败", e),
       );
     });
@@ -67,6 +73,7 @@
       items = e.payload.items ?? [];
       toolbar = e.payload.toolbar ?? null;
       opacityPct = clampOpacity(e.payload.opacity_pct);
+      seq = e.payload.seq ?? 0;
       fading = false;
       reportSize();
     });
@@ -100,6 +107,7 @@
         items = pending.items ?? [];
         toolbar = pending.toolbar ?? null;
         opacityPct = clampOpacity(pending.opacity_pct);
+        seq = pending.seq ?? 0;
         reportSize();
       })
       .catch(() => {});

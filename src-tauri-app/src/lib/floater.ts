@@ -40,6 +40,9 @@ let currentKind: Kind | null = null;
 let currentToken = 0;
 
 export function showTooltip(text: string, anchor: AnchorRect, opacityPct: number): number {
+  // 右键菜单打开时不显示 tooltip：菜单承载在浮层中且需要保持，
+  // 悬停提示不应顶掉菜单（返回 0 令牌，hide 令牌校验自然忽略）。
+  if (currentKind === "menu") return 0;
   const token = ++currentToken;
   currentKind = "tooltip";
   void invoke("show_floater", { kind: "tooltip", text, anchor, opacityPct }).catch((e) =>
