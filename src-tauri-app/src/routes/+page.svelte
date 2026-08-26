@@ -638,12 +638,14 @@
     const unlistenMoved = win.onMoved(() => scheduleSaveGeometry());
     const unlistenResized = win.onResized(() => scheduleSaveGeometry());
 
-    // ---- 悬浮窗高度自适应（竖排/横排统一）：按按钮内容调整客户区高度 ----
+    // ---- 悬浮窗高度自适应：按按钮内容调整客户区高度 ----
     // 策略：前端只测量目标高度，单次调用后端原子调整（位置 + 尺寸一次
     // SetWindowPos 生效，无"先改尺寸再改位置"的中间可见态）。
     // 锚定方向由后端解析：吸附时保持贴合边不动（窗口下方/屏顶向下扩展、
     // 窗口上方/屏底向上扩展、左右侧对称扩展）；无吸附时首次保顶边、
     // 之后保底边（符合拖动交互习惯）。
+    // 竖排高度由用户控制：首次加载贴合内容（四面 padding 等宽默认），
+    // 之后内容变化只扩不缩——用户手动调高的高度不被强制缩小。
     let firstAdjustDone = false;
     let adjustTimer: ReturnType<typeof setTimeout> | null = null;
     const adjustOverlayHeight = async () => {
@@ -660,6 +662,10 @@
         // 上限：不超出显示器工作区（竖排按钮很多时防止窗口超出屏幕）
         const maxH = Math.max(window.screen.availHeight * scale - 16, 40);
         targetInnerH = Math.min(targetInnerH, maxH);
+        // 竖排：非首次调整且内容低于当前高度 → 保持用户高度（不缩小）
+        if (layout === "vertical" && firstAdjustDone && targetInnerH < inner.height) {
+          return;
+        }
         if (Math.abs(inner.height - targetInnerH) > 2) {
           await invoke("apply_overlay_height", {
             targetInnerH,
@@ -675,14 +681,17 @@
       if (adjustTimer) clearTimeout(adjustTimer);
       adjustTimer = setTimeout(adjustOverlayHeight, 80);
     };
-    // 按钮增删/布局切换/窗口缩放统一走事件兜底：
+    // 按钮增删/布局切换统一走事件兜底：
     // - loadButtons 完成后派发（onMount 时的 ResizeObserver 因列表节点
     //   在 loading 阶段尚不存在而绑定失败，故不依赖它）
     // - 布局切换时 loadLayout 派发
-    // - 窗口尺寸变化（用户拖宽改变换行）由 onResized 触发
     const onAdjustEvt = () => scheduleAdjust();
     window.addEventListener("quickinput:adjust-height", onAdjustEvt);
-    const unlistenResizedAdjust = win.onResized(() => scheduleAdjust());
+    // 窗口尺寸变化：横排保持自适应贴合内容（按钮换行随宽度变化）；
+    // 竖排高度由用户控制（拖动调整后保持，不强制贴合），故竖排 resize 不触发自适应
+    const unlistenResizedAdjust = win.onResized(() => {
+      if (layout === "horizontal") scheduleAdjust();
+    });
     // 首次加载兜底（等待 loading 结束与 DOM 渲染）
     setTimeout(() => scheduleAdjust(), 300);
 
