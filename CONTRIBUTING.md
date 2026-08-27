@@ -1,86 +1,102 @@
 # 贡献指南
 
-感谢你对 Software Engineering Studios 项目的兴趣！以下是如何 contributing 的指南。
+感谢你对 QuickInput 的兴趣！本指南覆盖应用本体的开发流程；仓库内附带的 AI Agent 工程框架（`.studio/`）贡献方式见文末。
 
-## 如何贡献
+## 环境准备
 
-### 报告问题
+- Node.js 18+
+- Rust stable 工具链（`rustup` 安装）
+- Windows 10/11（自带 WebView2 运行时）
+- GitHub CLI（`gh`，发布流程需要）
 
-- 使用 [GitHub Issues](../../issues) 提交 Bug 报告或功能请求
-- 提交前请先搜索是否已有类似的 issue
+```bash
+git clone https://github.com/zls3434/quick-input.git
+cd quick-input/src-tauri-app
+npm install
+```
 
-### 提交代码
+## 开发与测试
 
-1. Fork 本仓库
-2. 创建特性分支（`git checkout -b feature/amazing-feature`）
-3. 提交更改（`git commit -m 'feat: 添加了某功能'`）
-   - 遵循 Conventional Commits 格式（`feat:`、`fix:`、`docs:`、`refactor:`、`test:`、`chore:`）
-4. 推送到分支（`git push origin feature/amazing-feature`）
-5. 创建 Pull Request
+```bash
+# 开发模式（热重载）
+cd src-tauri-app && npm run tauri:dev
 
-### 添加新 Agent
+# 配置库单元测试（模型校验、管理器、进程匹配）
+cd src/backend && cargo test
 
-1. 在 `.studio/agents/` 创建新的 `.md` 文件（规范源）
-2. 包含完整的 YAML frontmatter（name、description、tools、model）
-3. 编写详细的 markdown body（协作协议、职责、委托地图）
-4. 更新 `.studio/docs/agent-roster.md`（如果存在）
-5. 运行 `bash tools/adapters/sync-all.sh` 同步到各平台
+# Tauri 应用 Rust 单元测试
+cd src-tauri-app/src-tauri && cargo test
 
-### 添加新技能
+# 生产构建（安装包 + 绿色版，构建后自动重启根目录 QuickInput.exe 便于实测）
+cd src-tauri-app && npm run tauri:build
+```
 
-1. 在 `.studio/skills/` 下创建新目录和 `SKILL.md`（规范源）
-2. 包含完整的 YAML frontmatter（name、description、allowed-tools、model）
-3. 编写详细的工作流说明
-4. 运行 `/skill-test` 验证合规性
-5. 运行 `bash tools/adapters/sync-all.sh` 同步到各平台
+## 提交代码
 
-### 添加新规则
+1. Fork 本仓库并创建特性分支（`git checkout -b feature/amazing-feature`）
+2. 提交更改，遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)：
+   - `feat:` 新功能　`fix:` 缺陷修复　`docs:` 文档　`refactor:` 重构　`test:` 测试　`chore:` 构建/工具
+   - Subject 不超过 50 字
+3. 推送分支并创建 Pull Request
 
-1. 在 `.studio/rules/` 创建新的 `.md` 文件（规范源）
-2. 包含 YAML frontmatter 指定 `paths` 范围
-3. 编写清晰的规则说明和代码示例
-4. 运行 `bash tools/adapters/sync-all.sh` 同步到各平台
+### 版本号规则（提交前必读）
 
-### 添加新模板
+语义化版本 `主版本.次版本.修订号`，三处同步维护、缺一不可：
 
-1. 在 `.studio/templates/` 创建新的 `.md` 文件（规范源）
-2. 包含完整的元数据（状态、作者、更新日期）
-3. 编写模板内容，使用占位符标注需填充部分
-4. 运行 `bash tools/adapters/sync-all.sh` 同步到各平台
+- `src-tauri-app/package.json`
+- `src-tauri-app/src-tauri/tauri.conf.json`
+- `src-tauri-app/src-tauri/Cargo.toml`（`Cargo.lock` 构建时自动同步）
 
-## 代码规范
+递增规则：
 
-- 所有文档使用简体中文
-- 代码注释使用简体中文
-- 遵循 `.studio/docs/coding-standards.md` 中的规范
-- 公共 API 必须有文档注释
+| 改动类型 | 版本变化 |
+|---|---|
+| 常规改动（修复、小调整、UI 微调） | 修订号 +1 |
+| 成体系新功能（新注入模式、新配置页等） | 次版本号 +1，修订号归零 |
+| 主版本号 | 仅维护者确认后递增 |
 
-## 多平台开发指南
+版本号变更纳入功能提交本身，不单独发版本号提交。
 
-### 修改规则
+### 代码规范
 
-所有配置修改必须在 `.studio/` 规范源中进行，**不要直接修改各平台输出目录**（`.claude/`、`.cursor/`、`.windsurf/` 等）。
+- 前端组件 PascalCase，文件 kebab-case；Rust 按标准惯例
+- 禁止硬编码配置、禁止 `any` 类型、禁止空 catch 块、禁止生产代码 `console.log`
+- 代码注释与文档使用简体中文
+- 测试遵循 AAA 模式（Arrange-Act-Assert），独立、确定、无外部依赖
 
-### 修改流程
+## 发布流程（维护者）
 
-1. 修改 `.studio/` 中的源文件
-2. 运行 `bash tools/adapters/sync-all.sh` 同步到各平台
-3. 运行 `/platform-check` 验证一致性
-4. 提交变更（包含源文件和生成的平台配置）
+完整步骤见 `.trae/rules/project_rules.md` 的「发布流程」章节，概要：
 
-### 目录结构
+1. 三处版本号同步
+2. `npm run tauri:build` 构建
+3. 提交推送
+4. `gh release create` 上传安装包 + 绿色版 `portable.exe`
+5. `npx tauri signer sign -f <私钥路径>` 签名生成 `.sig`
+6. `node scripts/make-update-json.mjs` 生成 `latest.json`
+7. `gh release upload` 上传 `.sig` 与 `latest.json`
+8. 旧版本实测「检查更新」链路
 
-| 目录 | 说明 | 可否直接修改 |
-|---|---|---|
-| `.studio/` | 规范源层 | ✅ 在此修改 |
-| `tools/adapters/` | 同步脚本 | ✅ 可修改脚本 |
-| `.claude/` | Claude Code 输出 | ❌ 自动生成 |
-| `.cursor/` | Cursor 输出 | ❌ 自动生成 |
-| `.windsurf/` | Windsurf 输出 | ❌ 自动生成 |
-| `.trae/` | Trae 输出 | ❌ 自动生成 |
-| `.hermes/` | Hermes 输出 | ❌ 自动生成 |
-| `.workbuddy/` | WorkBuddy 输出 | ❌ 自动生成 |
+注意：
+
+- 签名私钥存于 `%USERPROFILE%\.quickinput\`，**严禁提交到版本控制**
+- 更新分发走镜像多端点（`tauri.conf.json` 的 `endpoints` 与 `make-update-json.mjs` 的 `DOWNLOAD_MIRROR` 两处联动），换镜像域名时两处同步改
+
+## 报告问题
+
+使用 [GitHub Issues](https://github.com/zls3434/quick-input/issues) 提交 Bug 或功能请求，提交前请先搜索是否已有类似 issue。 Bug 报告请附：系统版本、QuickInput 版本（关于页可查）、复现步骤、预期与实际行为。
+
+## Agent 工程框架（.studio/）
+
+本仓库附带多平台 AI Agent 配置（40 Agent / 74 技能 / 11 路径规则），来自独立的开源框架项目 [Software Engineering Studios](https://github.com/zls3434/Software-Engineering-Studios)：将一个 AI 编码会话转变为一间完整的软件工程开发工作室，通过 40 个协调的子 Agent 团队为 AI 辅助开发赋予真实开发团队的结构、流程和质量关卡，并支持多平台适配（Claude Code、Cursor、Trae、Windsurf 等）。
+
+本仓库中规范源在 `.studio/`，各平台目录（`.claude/`、`.cursor/`、`.trae/` 等）为生成产物：
+
+- 所有框架资产修改在 `.studio/` 进行，不要直接改平台输出目录
+- 修改后运行 `bash tools/adapters/sync-all.sh` 同步各平台
+- 新增 Agent / 技能 / 规则 / 模板均先落 `.studio/` 对应目录，再同步
+- 框架本身的贡献、完整文档与版本发布见[框架仓库](https://github.com/zls3434/Software-Engineering-Studios)
 
 ## 许可证
 
-提交的代码将受 MIT 许可证保护。
+提交的代码将受 [MIT 许可证](LICENSE)保护。
