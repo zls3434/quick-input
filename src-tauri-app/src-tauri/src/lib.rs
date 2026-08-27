@@ -913,6 +913,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![])),
         )
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_buttons,
             get_current_inject_mode,

@@ -30,6 +30,24 @@ Software Engineering Studios 将一个 AI 编码会话转变为一间完整的�
 - 根目录 `QuickInput.exe` 已在 `.gitignore` 排除，仅供测试，禁止提交到版本控制
 - 官方安装包产物在 `src-tauri-app/src-tauri/target/release/bundle/` 下（NSIS `.exe` 与 MSI `.msi`）
 
+## 发布流程
+
+每次发布遵循以下步骤（版本号规则见下节）：
+
+1. **版本同步**：确认 `src-tauri-app/package.json`、`tauri.conf.json`、`Cargo.toml` 三处版本号一致
+2. **构建**：在 `src-tauri-app/` 下执行 `npm run tauri:build`（即 `tauri build --features custom-protocol` + `scripts/copy-exe.mjs`）
+   - 官方安装包：`src-tauri-app/src-tauri/target/release/bundle/nsis/QuickInput_<版本>_x64-setup.exe`
+   - 根目录 `QuickInput.exe` 绿色版自动重启，仅供本地实测
+3. **提交推送**：按 Conventional Commits 提交（含版本号变更）并 push
+4. **创建 Release**：`gh release create v<版本> <setup.exe> --title "v<版本>" --notes "<更新说明>"`
+5. **更新签名**：用私钥对安装包签名生成 `.sig`：
+   `npx tauri signer sign -k %USERPROFILE%\.quickinput\quickinput-updater.key -p <密码> <setup.exe>`
+   - 私钥与密码仅存于 `%USERPROFILE%\.quickinput\`（禁止提交版本控制）；公钥已内置 `tauri.conf.json` 的 `updater.pubkey`
+6. **生成更新元数据**：`node scripts/make-update-json.mjs <版本> <setup.exe> <setup.exe.sig>`，产出 `latest.json`（含签名与下载 URL）
+7. **上传元数据**：`gh release upload v<版本> <setup.exe.sig> latest.json --clobber`
+   - `--clobber` 覆盖同名文件；更新端点固定为 `releases/latest/download/latest.json`，覆盖即对用户生效
+8. **验证**：本地运行旧版本点「检查更新」，确认可检测到新版本并完成升级
+
 ## 版本号规则
 
 语义化版本 `主版本.次版本.修订号`（如 0.8.12），三处同步维护，禁止只改其一：

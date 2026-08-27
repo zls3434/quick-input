@@ -3,6 +3,8 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { confirm } from "@tauri-apps/plugin-dialog";
   import Tooltip from "$lib/Tooltip.svelte";
   import { hideFloater, resetFloaterKind, showMenu } from "$lib/floater";
   import {
@@ -482,6 +484,37 @@
   onMount(() => {
     loadButtons();
     loadLayout();
+
+    // 启动时自动检查更新（设置页"关于"开关，localStorage 同 origin 共享）：
+    // 延迟数秒静默检查，发现新版本时弹窗询问，确认后下载并静默安装。
+    const AUTO_CHECK_KEY = "quickinput.auto-check-update";
+    setTimeout(() => {
+      let enabled = false;
+      try {
+        enabled = localStorage.getItem(AUTO_CHECK_KEY) === "1";
+      } catch {
+        /* localStorage 不可用时跳过自动检查 */
+      }
+      if (!enabled) return;
+      void (async () => {
+        try {
+          const update = await check();
+          if (!update) return;
+          const yes = await confirm(`发现新版本 v${update.version}，是否立即下载更新？`, {
+            title: "QuickInput 更新",
+            kind: "info",
+          });
+          if (!yes) return;
+          await update.downloadAndInstall();
+          void confirm("更新已完成，请重启 QuickInput 使新版本生效。", {
+            title: "QuickInput 更新",
+            kind: "info",
+          });
+        } catch (e) {
+          console.error("自动检查更新失败", e);
+        }
+      })();
+    }, 3000);
 
     // 窗口显示由 Rust 侧 on_page_load(Finished) 触发：
     // 窗口初始隐藏（visible:false）避免白屏闪烁，且隐藏窗口中 WebView2

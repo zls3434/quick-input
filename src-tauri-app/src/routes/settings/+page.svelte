@@ -2,6 +2,10 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { check } from "@tauri-apps/plugin-updater";
+  import type { Update } from "@tauri-apps/plugin-updater";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   // 指针拖拽排序 action：完全绕开浏览器 HTML5 DnD 引擎（其在 WebView2 中
   // 的 drop 派发不可靠且会显示禁止光标），改用 pointer 事件自行跟踪：
@@ -138,7 +142,7 @@
 
   let buttons = $state<ButtonConfig[]>([]);
   let profiles = $state<AppProfile[]>([]);
-  let activeTab = $state<"buttons" | "profiles" | "overlay">("buttons");
+  let activeTab = $state<"buttons" | "profiles" | "overlay" | "about">("buttons");
   let error = $state<string | null>(null);
 
   // 默认按钮按分组归类（group 字段为空归「未分组」；保持按钮原有顺序）
@@ -172,6 +176,98 @@
   let holdMs = $state(HOLD_DEFAULT);
   // 输入框草稿：输入中不强制夹取，失焦/回车时校验保存
   let holdInput = $state(String(HOLD_DEFAULT));
+
+  // ---- 关于页：版本信息 / 检查更新 / 自动更新 ----
+  // 自动检查开关持久化键（localStorage，与 overlay 同 origin 共享）
+  const AUTO_CHECK_KEY = "quickinput.auto-check-update";
+  let appVersion = $state("");
+  let updState = $state<
+    "idle" | "checking" | "uptodate" | "available" | "downloading" | "done" | "error"
+  >("idle");
+  let updError = $state("");
+  let updInfo = $state<{ version: string; notes: string } | null>(null);
+  let updProgress = $state<{ downloaded: number; total: number } | null>(null);
+  let autoCheck = $state(false);
+  // 最近一次检查得到的更新句柄（供一键更新复用，避免二次网络请求）
+  let updHandle: Update | null = null;
+
+  function readAutoCheck(): boolean {
+    try {
+      return localStorage.getItem(AUTO_CHECK_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function writeAutoCheck(v: boolean) {
+    try {
+      localStorage.setItem(AUTO_CHECK_KEY, v ? "1" : "0");
+    } catch {
+      /* localStorage 不可用时忽略（本次会话仍生效） */
+    }
+  }
+
+  // 检查更新：查询配置的 GitHub Releases 元数据（latest.json）
+  async function checkForUpdate() {
+    updState = "checking";
+    updError = "";
+    updInfo = null;
+    updProgress = null;
+    updHandle = null;
+    try {
+      const update = await check();
+      updHandle = update;
+      if (!update) {
+        updState = "uptodate";
+      } else {
+        updInfo = { version: update.version, notes: update.body ?? "" };
+        updState = "available";
+      }
+    } catch (e) {
+      updState = "error";
+      updError = `检查更新失败: ${e}`;
+    }
+  }
+
+  // 一键更新：下载安装包并静默安装（NSIS 替换），完成后提示重启生效
+  async function installUpdate() {
+    const update = updHandle;
+    if (!update) return;
+    updState = "downloading";
+    updError = "";
+    updProgress = { downloaded: 0, total: 0 };
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Progress") {
+          // Progress 事件按数据块到达，仅含 chunkLength，需自行累计
+          updProgress = {
+            downloaded: (updProgress?.downloaded ?? 0) + event.data.chunkLength,
+            total: 0,
+          };
+        }
+      });
+      updState = "done";
+    } catch (e) {
+      updState = "error";
+      updError = `更新安装失败: ${e}`;
+    }
+  }
+
+  // 格式化下载进度（KB/MB）
+  function fmtSize(n: number): string {
+    if (n <= 0) return "0 KB";
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  // 打开 GitHub 仓库主页
+  function openRepo() {
+    void openUrl("https://github.com/zls3434/quick-input");
+  }
+
+  function toggleAutoCheck() {
+    autoCheck = !autoCheck;
+    writeAutoCheck(autoCheck);
+  }
 
   // 快捷键配置：显示/隐藏悬浮窗
   let showOverlayShortcut = $state("CTRL+SHIFT+SPACE");
@@ -716,6 +812,11 @@
     loadOverlayLayout();
     loadAutostart();
     loadShortcuts();
+    // 关于页：应用版本 + 自动检查开关状态
+    getVersion()
+      .then((v) => (appVersion = v))
+      .catch(() => {});
+    autoCheck = readAutoCheck();
 
     // Esc 关闭编辑弹窗
     const onKeydown = (e: KeyboardEvent) => {
@@ -790,6 +891,13 @@
         onclick={() => (activeTab = "overlay")}
       >
         悬浮窗
+      </button>
+      <button
+        class="tab"
+        class:active={activeTab === "about"}
+        onclick={() => (activeTab = "about")}
+      >
+        关于
       </button>
     </div>
 
@@ -1040,6 +1148,89 @@
           拖动悬浮窗右上角移动按钮可移动位置，位置会被记忆，下次启动悬浮窗将停留在
           上次的位置；两种布局各自独立记忆。基础配置保存后立即生效并持久化。
         </p>
+      </div>
+    {:else if activeTab === "about"}
+      <div class="about-wrap">
+        <div class="about-hero">
+          <div class="about-logo" aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" width="44" height="44" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="6" width="36" height="36" rx="9" />
+              <path d="M17 31V17l14 14V17" />
+            </svg>
+          </div>
+          <div class="about-name">QuickInput</div>
+          <div class="about-version">版本 {appVersion || "…"}</div>
+          <div class="about-desc">桌面快捷输入工具：全局快捷键唤出悬浮窗，一键注入文本与命令</div>
+        </div>
+
+        <div class="cfg-block">
+          <div class="cfg-name">检查更新</div>
+          <div class="cfg-desc">从 GitHub Releases 检查是否有新版本</div>
+          <div class="update-actions">
+            <button
+              class="btn-secondary"
+              disabled={updState === "checking" || updState === "downloading"}
+              onclick={checkForUpdate}
+            >
+              {updState === "checking" ? "检查中…" : "检查更新"}
+            </button>
+            {#if updState === "available"}
+              <button class="btn-primary" onclick={installUpdate}>立即更新</button>
+            {/if}
+          </div>
+
+          {#if updState === "uptodate"}
+            <div class="update-msg ok">已是最新版本</div>
+          {:else if updState === "available" && updInfo}
+            <div class="update-msg available">
+              <div class="update-msg-title">发现新版本 v{updInfo.version}（当前 v{appVersion}）</div>
+              {#if updInfo.notes}
+                <div class="update-notes">{updInfo.notes}</div>
+              {/if}
+            </div>
+          {:else if updState === "downloading"}
+            <div class="update-msg downloading">
+              正在下载更新
+              {#if updProgress && updProgress.total > 0}
+                {fmtSize(updProgress.downloaded)} / {fmtSize(updProgress.total)}
+                （{Math.round((updProgress.downloaded / updProgress.total) * 100)}%）
+              {:else if updProgress}
+                已下载 {fmtSize(updProgress.downloaded)}
+              {:else}
+                …
+              {/if}
+            </div>
+          {:else if updState === "done"}
+            <div class="update-msg ok">
+              更新已完成，请重启 QuickInput 使新版本生效
+            </div>
+          {:else if updState === "error"}
+            <div class="update-msg err">{updError}</div>
+          {/if}
+        </div>
+
+        <div class="cfg-row">
+          <div class="cfg-info">
+            <div class="cfg-name">启动时自动检查更新</div>
+            <div class="cfg-desc">程序启动后静默检查，发现新版本时询问是否更新</div>
+          </div>
+          <button
+            class="toggle"
+            class:on={autoCheck}
+            onclick={toggleAutoCheck}
+            aria-label="启动时自动检查更新"
+          >
+            <span class="toggle-knob"></span>
+          </button>
+        </div>
+
+        <div class="cfg-row">
+          <div class="cfg-info">
+            <div class="cfg-name">项目主页</div>
+            <div class="cfg-desc">GitHub 仓库：zls3434/quick-input</div>
+          </div>
+          <button class="btn-secondary" onclick={openRepo}>打开</button>
+        </div>
       </div>
     {/if}
 
@@ -2081,4 +2272,81 @@
     font-size: 11px;
   }
   .btn-delete:hover { background: rgba(231,76,60,0.25); }
+
+  /* ---- 关于页 ---- */
+  .about-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px 18px 20px;
+    overflow-y: auto;
+    max-height: 100%;
+  }
+  .about-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 0 6px;
+  }
+  .about-logo {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(122, 162, 247, 0.22), rgba(122, 162, 247, 0.08));
+    border: 1px solid rgba(122, 162, 247, 0.28);
+    color: #9ab8f7;
+    margin-bottom: 6px;
+  }
+  .about-name {
+    font-size: 17px;
+    font-weight: 600;
+    color: #e8ecf4;
+  }
+  .about-version {
+    font-size: 11px;
+    color: #8a93a6;
+  }
+  .about-desc {
+    font-size: 12px;
+    color: #9aa3b5;
+    text-align: center;
+    line-height: 1.5;
+    max-width: 320px;
+  }
+  .update-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .update-msg {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .update-msg.ok { color: #7cc98a; }
+  .update-msg.err { color: #e74c3c; }
+  .update-msg.available { color: #9ab8f7; }
+  .update-msg.downloading { color: #c9a86a; }
+  .update-msg-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .update-notes {
+    margin-top: 6px;
+    padding: 8px 10px;
+    font-size: 11px;
+    color: #b8c0cf;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 140px;
+    overflow-y: auto;
+  }
 </style>
