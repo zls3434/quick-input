@@ -46,8 +46,23 @@ Software Engineering Studios 将一个 AI 编码会话转变为一间完整的�
    - 私钥与密码仅存于 `%USERPROFILE%\.quickinput\`（禁止提交版本控制）；公钥已内置 `tauri.conf.json` 的 `updater.pubkey`
 6. **生成更新元数据**：`node scripts/make-update-json.mjs <版本> <setup.exe> <setup.exe.sig>`，产出 `latest.json`（含签名与下载 URL）
 7. **上传元数据**：`gh release upload v<版本> <setup.exe.sig> latest.json --clobber`
-   - `--clobber` 覆盖同名文件；更新端点固定为 `releases/latest/download/latest.json`，覆盖即对用户生效
+   - `--clobber` 覆盖同名文件；更新端点见下「更新分发通道」，覆盖即对用户生效
 8. **验证**：本地运行旧版本点「检查更新」，确认可检测到新版本并完成升级
+
+### 更新分发通道（当前：方案 A 镜像多端点）
+
+背景：GitHub 在国内普遍不可直连（TCP 层超时），更新检查与安装包下载均失败。2026-08-27 实测后选定方案 A。
+
+当前实现（两处镜像，迁移时都需改）：
+- `tauri.conf.json` 的 `updater.endpoints`：镜像在前、GitHub 直连兜底（updater 对网络错误与非 2XX 均会回退下一端点，源码已核实）
+- `scripts/make-update-json.mjs` 的 `DOWNLOAD_MIRROR` 常量：`latest.json` 内安装包下载 URL 前置镜像（海外用户同样经镜像下载，速度可接受）
+- 签名校验不因镜像弱化：updater 强制用内置公钥验证下载内容，镜像仅作传输层，被篡改包会被拒装
+- 镜像可用性需观察：ghfast.top 为公益服务，失效时替换域名即可（endpoint 与 DOWNLOAD_MIRROR 两处同步改）
+
+迁移候选（按稳定度排序，触发条件：镜像连续失效或下载速度不可用时评估）：
+- **方案 B Gitee 双发**：Gitee 公开仓库同步发 Release，endpoints 改为 `[Gitee 直链, 镜像, GitHub]`；国内最稳，代价是发布多一步、仓库须公开
+- **方案 D 国内对象存储**：阿里云 OSS / 腾讯云 COS 放 `latest.json` + 安装包（OSS 三级域名免备案）；最稳定可控，有少量费用，发布多一步上传
+- **方案 C jsDelivr CDN**：`latest.json` 与安装包提交到仓库专用分支走 `cdn.jsdelivr.net`；免费且实测最快，但安装包进 git 不优雅、CDN 有缓存需 purge、国内可用性历史有波动
 
 ## 版本号规则
 
