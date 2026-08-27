@@ -40,6 +40,8 @@ Software Engineering Studios 将一个 AI 编码会话转变为一间完整的�
    - 根目录 `QuickInput.exe` 绿色版自动重启，仅供本地实测
 3. **提交推送**：按 Conventional Commits 提交（含版本号变更）并 push
 4. **创建 Release**：`gh release create v<版本> <setup.exe> --title "v<版本>" --notes "<更新说明>"`
+   - 资产含 NSIS 安装包 + 单文件绿色版；绿色版从 `src-tauri-app/src-tauri/target/release/quickinput.exe` 复制重命名为 `QuickInput_<版本>_x64_portable.exe` 后一并上传（免安装直跑，配置仍读用户目录）
+   - 示例：`Copy-Item .../target/release/quickinput.exe $env:TEMP/QuickInput_<版本>_x64_portable.exe; gh release upload v<版本> $env:TEMP/QuickInput_<版本>_x64_portable.exe`
 5. **更新签名**：用私钥对安装包签名生成 `.sig`：
    `npx tauri signer sign -f %USERPROFILE%\.quickinput\quickinput-updater.key -p <密码> <setup.exe>`
    - `-f/--private-key-path` 指定私钥文件路径（`-k` 仅接受 base64 私钥内容，勿混用）
