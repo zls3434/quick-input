@@ -873,6 +873,13 @@
     <div class="tab-bar">
       <button
         class="tab"
+        class:active={activeTab === "overlay"}
+        onclick={() => (activeTab = "overlay")}
+      >
+        通用设置
+      </button>
+      <button
+        class="tab"
         class:active={activeTab === "buttons"}
         onclick={() => (activeTab = "buttons")}
       >
@@ -884,13 +891,6 @@
         onclick={() => (activeTab = "profiles")}
       >
         应用映射
-      </button>
-      <button
-        class="tab"
-        class:active={activeTab === "overlay"}
-        onclick={() => (activeTab = "overlay")}
-      >
-        悬浮窗
       </button>
       <button
         class="tab"
@@ -1148,6 +1148,17 @@
           拖动悬浮窗右上角移动按钮可移动位置，位置会被记忆，下次启动悬浮窗将停留在
           上次的位置；两种布局各自独立记忆。基础配置保存后立即生效并持久化。
         </p>
+
+        <h3>配置管理</h3>
+        <div class="cfg-block">
+          <div class="cfg-name">配置文件</div>
+          <div class="cfg-desc">导出当前全部配置到 TOML 文件，或从 TOML 文件导入恢复</div>
+          <div class="share-toolbar">
+            <button class="btn-secondary" onclick={exportConfig}>导出配置</button>
+            <button class="btn-secondary" onclick={importConfig}>导入配置</button>
+            <button class="btn-secondary btn-warn" onclick={resetConfigToDefault}>恢复默认配置</button>
+          </div>
+        </div>
       </div>
     {:else if activeTab === "about"}
       <div class="about-wrap">
@@ -1468,12 +1479,6 @@
         </div>
       </div>
     {/if}
-
-    <div class="share-toolbar">
-      <button class="btn-secondary" onclick={exportConfig}>导出配置</button>
-      <button class="btn-secondary" onclick={importConfig}>导入配置</button>
-      <button class="btn-secondary btn-warn" onclick={resetConfigToDefault}>恢复默认配置</button>
-    </div>
   </div>
 </main>
 
@@ -1611,10 +1616,9 @@
 
   .share-toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
-    margin-top: 14px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 10px;
   }
 
   .overlay-settings h3 {
