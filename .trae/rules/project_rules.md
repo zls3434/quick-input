@@ -41,7 +41,8 @@ Software Engineering Studios 将一个 AI 编码会话转变为一间完整的�
 3. **提交推送**：按 Conventional Commits 提交（含版本号变更）并 push
 4. **创建 Release**：`gh release create v<版本> <setup.exe> --title "v<版本>" --notes "<更新说明>"`
 5. **更新签名**：用私钥对安装包签名生成 `.sig`：
-   `npx tauri signer sign -k %USERPROFILE%\.quickinput\quickinput-updater.key -p <密码> <setup.exe>`
+   `npx tauri signer sign -f %USERPROFILE%\.quickinput\quickinput-updater.key -p <密码> <setup.exe>`
+   - `-f/--private-key-path` 指定私钥文件路径（`-k` 仅接受 base64 私钥内容，勿混用）
    - 私钥与密码仅存于 `%USERPROFILE%\.quickinput\`（禁止提交版本控制）；公钥已内置 `tauri.conf.json` 的 `updater.pubkey`
 6. **生成更新元数据**：`node scripts/make-update-json.mjs <版本> <setup.exe> <setup.exe.sig>`，产出 `latest.json`（含签名与下载 URL）
 7. **上传元数据**：`gh release upload v<版本> <setup.exe.sig> latest.json --clobber`
