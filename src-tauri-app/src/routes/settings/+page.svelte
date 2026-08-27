@@ -2278,13 +2278,12 @@
   .btn-delete:hover { background: rgba(231,76,60,0.25); }
 
   /* ---- 关于页 ---- */
+  /* 不设内层滚动：统一由外层 .content 滚动，避免与 .content 形成双层滚动条 */
   .about-wrap {
     display: flex;
     flex-direction: column;
     gap: 14px;
     padding: 14px 18px 20px;
-    overflow-y: auto;
-    max-height: 100%;
   }
   .about-hero {
     display: flex;
