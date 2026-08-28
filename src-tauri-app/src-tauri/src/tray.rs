@@ -5,7 +5,7 @@
 //! 退出前通过 `tauri-plugin-dialog` 弹出确认对话框。
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
 /// 托盘菜单项 ID：显示/隐藏浮层
@@ -46,8 +46,23 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             // 无默认图标时使用 1x1 透明像素占位
             tauri::image::Image::new_owned(vec![0, 0, 0, 0], 1, 1)
         }))
+        .tooltip(format!(
+            "QuickInput v{}",
+            app.package_info().version
+        ))
         .menu(&menu)
         .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            // 左键双击切换浮层可见性（单击不响应，避免误触；
+            // 双击前系统派发的两次 Click 事件不做处理）
+            if let TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } = event
+            {
+                toggle_overlay(tray.app_handle());
+            }
+        })
         .on_menu_event(move |app, event| match event.id().as_ref() {
             MENU_TOGGLE => toggle_overlay(app),
             MENU_RESET_GEOMETRY => {
