@@ -1164,10 +1164,7 @@
       <div class="about-wrap">
         <div class="about-hero">
           <div class="about-logo" aria-hidden="true">
-            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" width="44" height="44" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="6" width="36" height="36" rx="9" />
-              <path d="M17 31V17l14 14V17" />
-            </svg>
+            <img class="about-logo-img" src="/logo.png" alt="QuickInput logo" draggable="false" />
           </div>
           <div class="about-name">QuickInput</div>
           <div class="about-version">版本 {appVersion || "…"}</div>
@@ -2293,16 +2290,14 @@
     padding: 12px 0 6px;
   }
   .about-logo {
+    margin-bottom: 6px;
+  }
+  .about-logo-img {
     width: 60px;
     height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     border-radius: 14px;
-    background: linear-gradient(135deg, rgba(122, 162, 247, 0.22), rgba(122, 162, 247, 0.08));
-    border: 1px solid rgba(122, 162, 247, 0.28);
-    color: #9ab8f7;
-    margin-bottom: 6px;
+    user-select: none;
+    -webkit-user-drag: none;
   }
   .about-name {
     font-size: 17px;
