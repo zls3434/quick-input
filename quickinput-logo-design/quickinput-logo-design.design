@@ -1,0 +1,63 @@
+{
+  "data": [
+    {
+      "id": "image-001",
+      "title": "闪电按键",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756286400000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "naturalSize": {
+          "width": 2048,
+          "height": 2048
+        }
+      },
+      "devMetadata": {
+        "imageSrc": "/e:/Projects/quick-input/quickinput-logo-design/assets/logo-speed-cursor.jpg"
+      }
+    },
+    {
+      "id": "image-002",
+      "title": "光标按键",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756286400000,
+      "canvasData": {
+        "x": 480,
+        "y": 0,
+        "naturalSize": {
+          "width": 2048,
+          "height": 2048
+        }
+      },
+      "devMetadata": {
+        "imageSrc": "/e:/Projects/quick-input/quickinput-logo-design/assets/logo-q-cursor.jpg"
+      }
+    },
+    {
+      "id": "image-003",
+      "title": "Q 键",
+      "type": "image",
+      "version": 1,
+      "createdAt": 1756286400000,
+      "canvasData": {
+        "x": 960,
+        "y": 0,
+        "naturalSize": {
+          "width": 2048,
+          "height": 2048
+        }
+      },
+      "devMetadata": {
+        "imageSrc": "/e:/Projects/quick-input/quickinput-logo-design/assets/logo-floating-panel.jpg"
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "freeSize",
+    "projectName": "QuickInput Logo"
+  }
+}

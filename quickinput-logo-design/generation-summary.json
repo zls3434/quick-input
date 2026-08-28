@@ -1,0 +1,38 @@
+{
+  "skill": {
+    "name": "solo-graphic-generation",
+    "version": "2026.08.06.21.24.57",
+    "release": "unsupported-size-user-confirmation",
+    "versionSource": "skill-release-manifest.json"
+  },
+  "requestedSize": "1024x1024 带透明背景",
+  "actualImageSize": "2048x2048",
+  "sizeConfirmationReason": "1024x1024 被生图服务拒绝，提示总像素至少需要 3,686,400；用户确认改用 2048x2048",
+  "assetCount": 3,
+  "assets": [
+    {
+      "filename": "logo-speed-cursor.jpg",
+      "title": "闪电按键",
+      "intendedSize": "2048x2048",
+      "status": "generated"
+    },
+    {
+      "filename": "logo-q-cursor.jpg",
+      "title": "光标按键",
+      "intendedSize": "2048x2048",
+      "status": "generated"
+    },
+    {
+      "filename": "logo-floating-panel.jpg",
+      "title": "Q 键",
+      "intendedSize": "2048x2048",
+      "status": "generated"
+    }
+  ],
+  "canvasImageNodeIds": [
+    "image-001",
+    "image-002",
+    "image-003"
+  ],
+  "iterationNote": "第四轮迭代：闪电按键升级为立体键帽，背景保持扁平渐变，闪电改为醒目的橙黄色"
+}
